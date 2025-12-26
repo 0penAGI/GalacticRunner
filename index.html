@@ -168,7 +168,6 @@
     if (tg) { 
         tg.ready(); 
         tg.expand(); 
-        // Настройка цветов под тему TG
         document.documentElement.style.setProperty('--tg-theme-bg-color', tg.themeParams.bg_color || '#000');
     }
 
@@ -180,13 +179,25 @@
     let width, height;
     let isPaused = false;
     
-    // --- Audio System (Synthesizer) ---
+    // --- 1️⃣ PATCH: Correct Audio Init ---
     const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioCtx();
+    let audioCtx = null;
+    let audioUnlocked = false;
 
+    function unlockAudio() {
+        if (!audioCtx) {
+            audioCtx = new AudioCtx();
+        }
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        audioUnlocked = true;
+    }
+
+    // --- Audio System (Synthesizer) ---
+    // --- 2️⃣ PATCH: Protect Synth from silent start ---
     function playSynthSound(freq, type, decay, vol) {
-        if (isPaused) return;
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if (isPaused || !audioUnlocked || !audioCtx) return;
 
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
@@ -233,7 +244,6 @@
         uniform int entityCount;
         out vec4 fragColor;
 
-        // Basic Hash & Noise
         float hash(vec2 p) { return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
         
         float noise(vec2 p) {
@@ -243,14 +253,12 @@
                        mix(hash(i+vec2(0,1)), hash(i+vec2(1,1)), f.x), f.y);
         }
 
-        // Fractal Brownian Motion
         float fbm(vec2 p) {
             float v = 0.0, a = 0.5;
             for(int i=0; i<5; i++) { v += a * noise(p); p *= 2.1; a *= 0.5; }
             return v;
         }
 
-        // Domain Warping for "Oil Paint" / "Liquid Marble" effect
         float pattern(vec2 p, out vec2 q, out vec2 r) {
             q = vec2(fbm(p + vec2(0.0)), fbm(p + vec2(5.2, 1.3)));
             r = vec2(fbm(p + 4.0*q + vec2(1.7, 9.2)), fbm(p + 4.0*q + vec2(8.3, 2.8)));
@@ -259,47 +267,35 @@
 
         void main() {
             vec2 uv = gl_FragCoord.xy / res;
-            
-            // Масштабируем координаты для фона
             vec2 p = uv * 3.0;
             
-            // Анимация жидкости
             vec2 q, r;
             float f = pattern(p + time * 0.1 * speed, q, r);
             
-            // Смешивание цветов на основе паттерна искажений
             vec3 col = mix(vec3(0.0, 0.05, 0.1), vec3(0.1, 0.0, 0.2), f);
-            col = mix(col, vec3(0.0, 0.3, 0.4), length(q)); // q отвечает за крупные переливы
-            col = mix(col, vec3(phase, 0.1, 0.5-phase), length(r)); // r за детали
-            
-            // Усиление контраста (светлые пятна)
+            col = mix(col, vec3(0.0, 0.3, 0.4), length(q));
+            col = mix(col, vec3(phase, 0.1, 0.5-phase), length(r));
             col *= (f * f * f + 0.6 * f * f + 0.5 * f);
 
-            // --- RENDER ENTITIES ---
             for(int i=0; i<entityCount; i++) {
                 float d = length(gl_FragCoord.xy - entities[i].xy);
                 if(d < 30.0) {
                     float glow = smoothstep(30.0, 0.0, d);
                     float type = entities[i].z;
-                    
-                    if(type == 0.0) col += vec3(1.0, 0.8, 0.2) * glow; // Dust (Gold)
-                    if(type == 1.0) col += vec3(0.0, 1.0, 0.6) * glow; // Alien (Green)
-                    if(type == 2.0) col += vec3(1.0, 0.1, 0.1) * glow; // Obstacle (Red)
+                    if(type == 0.0) col += vec3(1.0, 0.8, 0.2) * glow;
+                    if(type == 1.0) col += vec3(0.0, 1.0, 0.6) * glow;
+                    if(type == 2.0) col += vec3(1.0, 0.1, 0.1) * glow;
                 }
             }
 
-            // --- RENDER SHIP ---
             float shipD = length(gl_FragCoord.xy - ship);
-            // Внешнее свечение
             col += vec3(0.0, 0.8, 1.0) * smoothstep(40.0, 0.0, shipD) * 0.7;
-            // Ядро корабля (белое)
             if(shipD < 12.0) col = vec3(1.0);
 
             fragColor = vec4(col, 1.0);
         }
     `;
 
-    // --- WebGL Boilerplate ---
     function createShader(gl, type, src) {
         const s = gl.createShader(type);
         gl.shaderSource(s, src); gl.compileShader(s);
@@ -314,11 +310,9 @@
     gl.attachShader(program, createShader(gl, gl.VERTEX_SHADER, vertexSource));
     gl.attachShader(program, createShader(gl, gl.FRAGMENT_SHADER, fragmentSource));
     gl.linkProgram(program);
-    
     if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
         console.error(gl.getProgramInfoLog(program));
     }
-    
     gl.useProgram(program);
 
     const buffer = gl.createBuffer();
@@ -339,7 +333,6 @@
         entCount: gl.getUniformLocation(program, 'entityCount')
     };
 
-    // --- Game Logic ---
     let score = 0, sector = 1, speed = 1.0;
     let shipX = 0, shipY = 0, targetX = 0, targetY = 0;
     const entities = [];
@@ -348,7 +341,6 @@
         width = canvas.width = window.innerWidth;
         height = canvas.height = window.innerHeight;
         gl.viewport(0, 0, width, height);
-        // Центрируем корабль при старте
         if(shipX === 0) { shipX = targetX = width/2; shipY = targetY = height * 0.8; }
     }
     window.addEventListener('resize', resize);
@@ -356,8 +348,6 @@
 
     function spawn() {
         if(isPaused || entities.length > 40) return;
-        // Типы: 0=Dust, 1=Alien, 2=Obstacle
-        // Вероятности: 60% Dust, 20% Alien, 20% Obstacle
         const rand = Math.random();
         let type = 0;
         if(rand > 0.6) type = (rand > 0.8) ? 1 : 2;
@@ -369,7 +359,9 @@
         });
     }
 
+    // --- 4️⃣ PATCH: Failsafe via Pause Button ---
     function togglePause() {
+        unlockAudio(); // <--- Вставлено сюда
         isPaused = !isPaused;
         const overlay = document.getElementById('overlay');
         const btn = document.getElementById('pause-btn');
@@ -381,11 +373,9 @@
         } else {
             overlay.style.display = 'none';
             btn.textContent = "PAUSE";
-            if (audioCtx.state === 'suspended') audioCtx.resume();
         }
     }
     
-    // Привязываем кнопку паузы
     document.getElementById('pause-btn').onclick = (e) => { 
         e.stopPropagation(); 
         togglePause(); 
@@ -395,18 +385,19 @@
         const m = document.getElementById('message-overlay');
         m.textContent = txt;
         m.classList.remove('msg-show');
-        void m.offsetWidth; // Trigger reflow
+        void m.offsetWidth; 
         m.classList.add('msg-show');
     }
+
+    // --- 3️⃣ PATCH: Unlock via real gesture ---
+    document.body.addEventListener('touchstart', unlockAudio, { once: true });
+    document.body.addEventListener('mousedown', unlockAudio, { once: true });
 
     // Input Handling
     const move = (e) => {
         const t = e.touches ? e.touches[0] : e;
         targetX = t.clientX; 
         targetY = t.clientY;
-        
-        // Разблокируем аудио при первом взаимодействии (требование браузеров)
-        if(audioCtx.state === 'suspended') audioCtx.resume();
     };
     
     window.addEventListener('mousemove', move);
@@ -419,28 +410,23 @@
     function loop(t) {
         requestAnimationFrame(loop);
         
-        // --- LOGIC UPDATE (Only if not paused) ---
         if (!isPaused) {
             const dt = Math.min((t - lastT) * 0.001, 0.1);
             lastT = t;
 
-            // Smooth ship movement
             shipX += (targetX - shipX) * 0.15;
             shipY += (targetY - shipY) * 0.15;
 
-            // Spawning
             spawnTimer += dt;
             if(spawnTimer > 0.6 / speed) { 
                 spawn(); 
                 spawnTimer = 0; 
             }
 
-            // Entities Update
             for(let i=entities.length-1; i>=0; i--) {
                 const e = entities[i];
                 e.y += speed * 250 * dt;
 
-                // Collision detection
                 const d = Math.hypot(e.x - shipX, e.y - shipY);
                 if(d < 35) {
                     if(e.t === 0) { 
@@ -463,12 +449,9 @@
                     entities.splice(i, 1);
                     continue;
                 }
-                
-                // Remove off-screen
                 if(e.y > height + 50) entities.splice(i, 1);
             }
 
-            // Level Up
             if(score >= sector * 300) {
                 sector++; 
                 speed += 0.15;
@@ -476,23 +459,20 @@
                 showMsg(`SECTOR ${sector} REACHED`);
             }
         } else {
-            // В паузе обновляем lastT, чтобы при выходе не было скачка времени
             lastT = t;
         }
 
-        // --- RENDER UPDATE (Always) ---
         gl.uniform2f(locs.res, width, height);
-        gl.uniform1f(locs.time, t * 0.001); // Background continues to flow even in pause
-        gl.uniform2f(locs.ship, shipX, height - shipY); // Flip Y for WebGL
+        gl.uniform1f(locs.time, t * 0.001);
+        gl.uniform2f(locs.ship, shipX, height - shipY);
         gl.uniform1f(locs.speed, speed);
         gl.uniform1f(locs.phase, (sector % 5) / 5.0);
 
-        // Flatten entities for GPU
-        const entData = new Float32Array(150); // 50 * 3
+        const entData = new Float32Array(150);
         entities.forEach((e, i) => {
             if(i < 50) {
                 entData[i*3] = e.x;
-                entData[i*3+1] = height - e.y; // Flip Y
+                entData[i*3+1] = height - e.y;
                 entData[i*3+2] = e.t;
             }
         });
@@ -501,7 +481,6 @@
 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-        // UI Update
         document.getElementById('score-val').textContent = score;
         document.getElementById('sector-val').textContent = sector;
     }
