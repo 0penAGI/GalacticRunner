@@ -405,14 +405,27 @@
     }
 
     // Input Handling
+    let audioInitialized = false;
     const move = (e) => {
         const t = e.touches ? e.touches[0] : e;
         targetX = t.clientX; 
         targetY = t.clientY;
         
-        // Разблокируем аудио при первом взаимодействии (требование браузеров)
-        initAudio();
-        if(audioCtx.state === 'suspended') audioCtx.resume();
+        // Инициализация AudioContext только один раз при первом взаимодействии
+        if(!audioInitialized) {
+            initAudio();
+            // Проигрываем короткий "silent" звук, чтобы разблокировать WebView
+            const g = audioCtx.createGain();
+            g.gain.setValueAtTime(0, audioCtx.currentTime);
+            g.connect(audioCtx.destination);
+            const osc = audioCtx.createOscillator();
+            osc.connect(g);
+            osc.start();
+            osc.stop(audioCtx.currentTime + 0.01);
+            
+            if(audioCtx.state === 'suspended') audioCtx.resume();
+            audioInitialized = true;
+        }
     };
     
     window.addEventListener('mousemove', move);
