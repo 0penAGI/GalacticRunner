@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Galactic X-Dust: Audio-Reactive Evolution</title>
+    <title>Galactic X-Dust: Final Audio-Reactive</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
     <style>
         :root { 
             --neon-blue: #00ffff; 
             --neon-pink: #ff00ff; 
+            --danger: #ff2a2a; 
             --bg-dark: #050505; 
         }
         * { margin: 0; padding: 0; box-sizing: border-box; user-select: none; -webkit-user-select: none; }
@@ -28,7 +29,7 @@
             display: flex; justify-content: space-between; pointer-events: auto; 
         }
         .stat-box { 
-            background: rgba(0,0,0,0.6); border: 1px solid rgba(0,255,255,0.2); 
+            background: rgba(0,0,0,0.7); border: 1px solid rgba(0,255,255,0.2); 
             padding: 10px 15px; border-radius: 12px; backdrop-filter: blur(8px); 
             box-shadow: 0 0 15px rgba(0,255,255,0.1);
         }
@@ -36,10 +37,9 @@
         #score { color: var(--neon-pink); font-weight: bold; font-size: 18px; }
         #sector { color: #ffff00; }
         
-        /* Анимация спектра */
         #audio-indicator {
             position: absolute; bottom: 20px; left: 20px;
-            display: flex; gap: 4px; height: 20px; align-items: flex-end;
+            display: flex; gap: 3px; height: 20px; align-items: flex-end;
         }
         .bar { width: 4px; background: var(--neon-blue); height: 2px; transition: height 0.05s; }
 
@@ -52,7 +52,7 @@
         }
         .card { text-align: center; padding: 40px; border: 2px solid var(--neon-blue); border-radius: 24px; background: #000; }
         h1 { margin-bottom: 10px; text-shadow: 0 0 20px var(--neon-blue); }
-        p { color: #888; margin-bottom: 30px; }
+        p { color: #888; margin-bottom: 30px; line-height: 1.4; }
         .btn { 
             background: linear-gradient(135deg, var(--neon-blue), #008888); 
             color: #000; border: none; padding: 15px 50px; font-size: 20px; 
@@ -86,7 +86,7 @@
             <div class="stat-row">SECTOR: <span id="sector">1</span></div>
         </div>
         <div style="font-size: 12px; text-align: right; color: #666;">
-            AUDIO SYNC<br>EVOLUTION
+            AUDIO SYNC<br>ACTIVE
         </div>
     </div>
     <div id="msg"></div>
@@ -97,9 +97,9 @@
 
 <div id="overlay">
     <div class="card">
-        <h1>X-DUST EVOLUTION</h1>
-        <p>Собирай пыль, чтобы усложнить музыку.<br>Мир пульсирует в такт биту.</p>
-        <button class="btn" onclick="startGame()">START ENGINE</button>
+        <h1>X-DUST FINAL</h1>
+        <p>Собирай золото.<br>Избегай красного.<br>Зеленое повышает уровень музыки.</p>
+        <button class="btn" id="startBtn">START ENGINE</button>
     </div>
 </div>
 
@@ -116,28 +116,35 @@
     
     // --- GAME STATE ---
     let shipX = 0, shipY = 0, targetX = 0, targetY = 0;
-    const entities = []; // {x, y, type: 0=dust, 1=alien}
+    const entities = []; // {x, y, type: 0=dust, 1=alien, 2=meteor}
     
     // --- AUDIO ENGINE ---
     let audioCtx, analyser, dataArray;
     let nextNoteTime = 0.0;
     let beatStep = 0;
-    const lookahead = 25.0; // ms
-    const scheduleAheadTime = 0.1; // s
-    const tempo = 240.0; // BPM (16th notes)
+    const lookahead = 25.0; 
+    const scheduleAheadTime = 0.1; 
+    const tempo = 240.0; 
     const secondsPerBeat = 60.0 / tempo;
-    let bassLevel = 0; // Smoothed for visual
+    let bassLevel = 0; 
     let trebleLevel = 0;
 
     function initAudio() {
+        // Создаем контекст внутри реакции на клик пользователя
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         audioCtx = new AudioContext();
         
+        // ЖЕСТКИЙ ФИКС: Принудительный resume сразу после создания
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume().then(() => {
+                console.log('Audio Context Resumed');
+            });
+        }
+        
         analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256; // 128 bins
+        analyser.fftSize = 256; 
         dataArray = new Uint8Array(analyser.frequencyBinCount);
         
-        // Важно: анализатор подключаем к выходу, чтобы слышать звук и видеть его
         analyser.connect(audioCtx.destination);
         
         nextNoteTime = audioCtx.currentTime;
@@ -145,6 +152,9 @@
     }
 
     function playTone(freq, type, duration, vol, detune = 0, time = 0) {
+        // Страховка: если звук заблокирован, не играем (чтобы не вылетало)
+        if (!audioCtx) return;
+        
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
         
@@ -153,30 +163,32 @@
         osc.detune.value = detune;
         
         gain.gain.setValueAtTime(vol, time);
-        gain.gain.exponentialRampToValueAtTime(0.001, time + duration);
+        gain.gain.exponentialRampToValueAtTime(0.0001, time + duration);
         
         osc.connect(gain);
-        gain.connect(analyser); // <-- Connect to analyser for reactivity
+        gain.connect(analyser);
         
         osc.start(time);
         osc.stop(time + duration);
     }
 
     function scheduler() {
-        // While there are notes that will need to play before the next interval, 
-        // schedule them and advance the pointer.
         while (nextNoteTime < audioCtx.currentTime + scheduleAheadTime) {
             scheduleNote(beatStep, nextNoteTime);
             nextNoteTime += secondsPerBeat;
-            beatStep = (beatStep + 1) % 16; // 16 steps in a loop (4 bars of 4/4)
+            beatStep = (beatStep + 1) % 16; 
         }
-        if(isStarted) setTimeout(scheduler, lookahead);
+        if(isStarted && audioCtx.state === 'running') {
+            setTimeout(scheduler, lookahead);
+        } else if (isStarted) {
+            // Если контекст случайно ушел в suspended, пробуем восстановить планировщик
+            setTimeout(scheduler, 100); 
+        }
     }
 
     function scheduleNote(step, time) {
-        // 1. KICK (Основной ритм) - Каждые 4 шага (четвертные ноты)
+        // 1. KICK (Всегда)
         if (step % 4 === 0) {
-            // Pitch drop для реалистичности бочки
             const osc = audioCtx.createOscillator();
             const gain = audioCtx.createGain();
             osc.frequency.setValueAtTime(150, time);
@@ -184,54 +196,47 @@
             gain.gain.setValueAtTime(1.0, time);
             gain.gain.exponentialRampToValueAtTime(0.001, time + 0.5);
             osc.connect(gain); gain.connect(analyser);
-            osc.start(time); osc.stop(time + 0.5);
+            osc.start(time); osc.stop(time + 0.7);
         }
 
-        // 2. HI-HAT (Перкуссия) - Сектор 2+
-        if (sector >= 2 && step % 2 !== 0) { // Восьмые ноты
-            playTone(800 + Math.random()*200, 'square', 0.05, 0.1, 0, time);
+        // 2. HI-HAT (Сектор 2+)
+        if (sector >= 2 && step % 2 !== 0) {
+            playTone(800 + Math.random()*200, 'square', 0.05, 0.05, 0, time);
         }
 
-        // 3. BASS LINE (Мелодия) - Сектор 3+
+        // 3. BASS (Сектор 3+)
         if (sector >= 3 && step % 2 === 0) {
-            // Простая techno bassline
-            const notes = [55, 55, 65, 49]; // A1, G#1...
+            const notes = [55, 55, 65, 49];
             const note = notes[(step / 2) % 4] * (1 + sector*0.05);
-            playTone(note, 'sawtooth', 0.2, 0.15, 5, time);
+            playTone(note, 'sawtooth', 0.2, 0.12, 5, time);
         }
 
-        // 4. LEAD / ATMOSPHERE - Сектор 4+
+        // 4. LEAD (Сектор 4+)
         if (sector >= 4 && step === 0) {
-            playTone(440 * (sector % 2 === 0 ? 1.5 : 1.0), 'triangle', 2.0, 0.05, 0, time);
+            playTone(440 * (sector % 2 === 0 ? 1.5 : 1.0), 'triangle', 2.0, 0.04, 0, time);
         }
     }
 
     function updateAudioData() {
-        if(!audioCtx) return;
+        if(!audioCtx || audioCtx.state !== 'running') return;
         analyser.getByteFrequencyData(dataArray);
         
-        // Bass: низкие частоты (первые ~10 бинов)
         let sumBass = 0;
         for(let i=0; i<10; i++) sumBass += dataArray[i];
-        const rawBass = (sumBass / 10) / 255.0;
-        bassLevel += (rawBass - bassLevel) * 0.2; // Smooth lerp
+        bassLevel += ((sumBass / 10) / 255.0 - bassLevel) * 0.2;
 
-        // Treble: высокие частоты (~бины 50-80)
         let sumTreble = 0;
         for(let i=50; i<80; i++) sumTreble += dataArray[i];
-        const rawTreble = (sumTreble / 30) / 255.0;
-        trebleLevel += (rawTreble - trebleLevel) * 0.2;
+        trebleLevel += ((sumTreble / 30) / 255.0 - trebleLevel) * 0.2;
 
-        // UI Visualizer Update
         const bars = document.querySelectorAll('.bar');
         bars.forEach((b, i) => {
-            // Use different frequency ranges for different bars
             const val = dataArray[i * 8] / 3;
             b.style.height = Math.max(2, val) + 'px';
         });
     }
 
-    // --- SHADERS (LIQUID + AUDIO REACTIVE) ---
+    // --- SHADERS ---
     const vertexSrc = `#version 300 es
         in vec2 pos; void main() { gl_Position = vec4(pos, 0.0, 1.0); }`;
 
@@ -243,7 +248,7 @@
         uniform float bass;
         uniform float treble;
         uniform float phase;
-        uniform vec3 ents[50];
+        uniform vec3 ents[60]; // Увеличен буфер под метеоры
         uniform int entCount;
         out vec4 fCol;
 
@@ -259,17 +264,10 @@
             return v;
         }
 
-        // Domain Warping с аудио-инъекцией
         float pattern(vec2 p, out vec2 q, out vec2 r) {
-            // Audio Injection: Bass масштабирует координаты (Pump эффект)
             vec2 scale = vec2(1.0) + bass * 0.3;
-            
             q = vec2(fbm(p * scale + vec2(0.0)), fbm(p * scale + vec2(5.2, 1.3)));
-            
-            // Audio Injection: Treble добавляет хаотичность в средний слой
             r = vec2(fbm(p + 4.0*q + vec2(1.7, 9.2)), fbm(p + 4.0*q + vec2(8.3, 2.8)));
-            
-            // Audio Injection: Bass влияет на глубину искажения
             float shift = bass * 0.5;
             return fbm(p + 4.0*r + shift);
         }
@@ -279,21 +277,17 @@
             vec2 p = uv * 3.0;
             
             vec2 q, r;
-            // Время замедляется или ускоряется в зависимости от баса
             float t_mod = time * (1.0 + bass * 0.2);
             float f = pattern(p + t_mod * 0.1, q, r);
             
             vec3 col = mix(vec3(0.0, 0.05, 0.1), vec3(0.1, 0.0, 0.2), f);
             col = mix(col, vec3(0.0, 0.3, 0.4), length(q));
-            
-            // Treble меняет цвет (вспышки)
             vec3 highCol = vec3(0.8, 0.4, 1.0);
             col = mix(col, highCol, length(r) * treble * 2.0);
             
-            // Пост-обработка
             col *= (f * f * f + 0.6 * f * f + 0.5 * f);
 
-            // Ship Glow reacts to beat too
+            // Ship
             float dShip = length(gl_FragCoord.xy - ship);
             float beatGlow = smoothstep(50.0, 0.0, dShip) * (1.0 + bass * 0.5);
             col += vec3(0.0, 0.8, 1.0) * beatGlow;
@@ -302,10 +296,14 @@
             // Entities
             for(int i=0; i<entCount; i++) {
                 float d = length(gl_FragCoord.xy - ents[i].xy);
-                if(d < 25.0) {
-                    float glow = smoothstep(25.0, 0.0, d);
-                    if(ents[i].z < 0.5) col += vec3(1.0, 0.8, 0.2) * glow; // Dust
-                    else col += vec3(0.0, 1.0, 0.5) * glow * (1.0 + treble); // Alien
+                if(d < 30.0) {
+                    float glow = smoothstep(30.0, 0.0, d);
+                    float type = ents[i].z;
+                    
+                    // 0 = Dust (Yellow), 1 = Alien (Green), 2 = Meteor (Red)
+                    if(type < 0.5) col += vec3(1.0, 0.8, 0.2) * glow; 
+                    else if(type < 1.5) col += vec3(0.0, 1.0, 0.5) * glow * (1.0 + treble); 
+                    else col += vec3(1.0, 0.1, 0.2) * glow * (1.0 + bass); // RED METEOR
                 }
             }
 
@@ -313,7 +311,6 @@
         }
     `;
 
-    // --- WEBGL SETUP ---
     const prg = gl.createProgram();
     function compile(t, s) { 
         const sh = gl.createShader(t); gl.shaderSource(sh, s); gl.compileShader(sh); 
@@ -340,7 +337,6 @@
         entCount: gl.getUniformLocation(prg, 'entCount')
     };
 
-    // --- GAME LOGIC ---
     function resize() {
         width = canvas.width = window.innerWidth;
         height = canvas.height = window.innerHeight;
@@ -350,12 +346,18 @@
     window.addEventListener('resize', resize);
     resize();
 
-    function startGame() {
+    // Кнопка СТАРТ (самый надежный триггер аудио)
+    document.getElementById('startBtn').addEventListener('click', () => {
         document.getElementById('overlay').style.display = 'none';
         isStarted = true;
-        initAudio();
+        initAudio(); // Создаем контекст СЮДА
         if(tg) tg.HapticFeedback.impactOccurred('medium');
-    }
+    });
+
+    // Страховка звука от жеста на экране (если клик мимо кнопки)
+    document.body.addEventListener('touchstart', () => {
+        if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }, {passive:true});
 
     window.addEventListener('touchmove', e => {
         e.preventDefault();
@@ -380,15 +382,17 @@
 
         updateAudioData();
 
-        // Physics
         shipX += (targetX - shipX) * 0.1;
         shipY += (targetY - shipY) * 0.1;
 
         spawnTimer += dt;
-        // Чем выше сектор, тем быстрее спавн
         if(spawnTimer > 0.4 / (1 + sector*0.1)) { 
-            // Type 0 = Dust, Type 1 = Alien (Evolution)
-            const type = Math.random() > 0.9 ? 1 : 0; 
+            const r = Math.random();
+            let type = 0; 
+            // Вероятности: 65% Dust, 20% Meteor, 15% Alien
+            if(r > 0.85) type = 2; // Meteor (Red)
+            else if(r > 0.70) type = 1; // Alien (Green)
+            
             entities.push({
                 x: Math.random() * width, 
                 y: -30, 
@@ -399,16 +403,21 @@
 
         for(let i=entities.length-1; i>=0; i--) {
             const e = entities[i];
-            e.y += (150 + sector * 20) * dt; // Скорость растет с сектором
+            e.y += (150 + sector * 20) * dt;
 
             const dist = Math.hypot(e.x - shipX, e.y - shipY);
             if(dist < 35) {
                 if(e.t === 1) { 
-                    // ALIEN / EVOLUTION
+                    // ALIEN
                     score += 50; 
                     if(sector < 5) sector++;
-                    showMessage(`SECTOR ${sector} UPGRADE!`);
+                    showMessage(`SECTOR ${sector} UPGRADE`);
                     if(tg) tg.HapticFeedback.notificationOccurred('success');
+                } else if(e.t === 2) {
+                    // METEOR (Red)
+                    score = Math.max(0, score - 30);
+                    showMessage("WARNING!");
+                    if(tg) tg.HapticFeedback.notificationOccurred('error');
                 } else { 
                     // DUST
                     score += 10;
@@ -420,7 +429,6 @@
             }
         }
 
-        // Render
         gl.uniform2f(loc.res, width, height);
         gl.uniform1f(loc.time, t * 0.001);
         gl.uniform2f(loc.ship, shipX, height - shipY);
@@ -428,14 +436,14 @@
         gl.uniform1f(loc.treble, trebleLevel);
         gl.uniform1f(loc.phase, sector / 5.0);
 
-        const entData = new Float32Array(150);
-        entities.slice(0, 50).forEach((e, i) => {
+        const entData = new Float32Array(180); // 60 entities * 3
+        entities.slice(0, 60).forEach((e, i) => {
             entData[i*3] = e.x;
             entData[i*3+1] = height - e.y;
             entData[i*3+2] = e.t;
         });
         gl.uniform3fv(loc.ents, entData);
-        gl.uniform1i(loc.entCount, Math.min(entities.length, 50));
+        gl.uniform1i(loc.entCount, Math.min(entities.length, 60));
 
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
