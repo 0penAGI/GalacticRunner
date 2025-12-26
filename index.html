@@ -23,7 +23,7 @@
             background: #000;
             font-family: 'Courier New', monospace;
             color: var(--neon-blue);
-            touch-action: none; /* Critical for game controls */
+            touch-action: none;
         }
         canvas {
             display: block;
@@ -130,12 +130,11 @@
     if (tg) {
         tg.ready();
         tg.expand();
-        // Применяем тему Telegram если есть
         document.documentElement.style.setProperty('--tg-theme-bg-color', tg.themeParams.bg_color || '#000');
     }
 
     const canvas = document.getElementById('canvas');
-    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false }); // Optimize for perf
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: true });
     
     if (!gl) {
         alert('Ваш браузер не поддерживает WebGL 2. Необходима живая краска.');
@@ -154,7 +153,7 @@
 
     // --- Shaders ---
     
-    // 1. Vertex Shader (Standard)
+    // 1. Vertex Shader
     const vertexShaderSource = `#version 300 es
         in vec2 position;
         void main() {
@@ -242,7 +241,7 @@
             vec2 f = flow(flowUv, time * speed);
             scrollUv += f * 0.15;
 
-            // Tunnel effect (still needed for depth focus)
+            // Tunnel effect
             vec2 toShip = scrollUv - shipPos / resolution;
             float distToShip = length(toShip);
             float tunnel = 1.0 - exp(-distToShip * 2.0);
@@ -258,20 +257,18 @@
             
             // 🩸 PATCH 5: Color becomes alive
             float pattern = mix(dust, nebula, 0.5);
-            pattern = pow(pattern, 1.2); // Increase contrast
-            
-            // Apply pattern with tunnel depth
+            pattern = pow(pattern, 1.2);
             pattern *= tunnel;
 
             vec3 col = palette(pattern + time * 0.05, sectorPhase);
-            col += vec3(0.1, 0.05, 0.15) * pattern; // Subtle tint overlay
+            col += vec3(0.1, 0.05, 0.15) * pattern;
             
-            // Stars (Sparse, for texture)
+            // Stars
             float stars = 0.0;
-            vec2 starUv = floor(scrollUv * 150.0); // More sparse
+            vec2 starUv = floor(scrollUv * 150.0);
             if(hash(starUv) > 0.985) {
                 float twinkle = 0.5 + 0.5 * sin(time * 5.0 + hash(starUv) * 100.0);
-                stars = twinkle * hash(starUv); // Random brightness
+                stars = twinkle * hash(starUv);
             }
             col += vec3(stars) * 0.5;
             
@@ -314,15 +311,14 @@
             float shipCore = circle(uv, shipPos, 15.0);
             col = mix(col, shipCol, shipCore);
             
-            // Ship glow (intense)
+            // Ship glow
             col += shipCol * shipEffect * 0.4;
             
-            // Ship trail (fluid-like)
+            // Ship trail
             vec2 trailDir = vec2(0.0, 1.0);
             for(int i = 0; i < 6; i++) {
                 float offset = float(i) * 12.0;
-                // Distort trail slightly with noise for "liquid" feel
-                vec2 trailPos = shipPos + trailDir * offset + vec2(sin(time*10.0 + float(i))*2.0, 0.0); 
+                vec2 trailPos = shipPos + trailDir * offset + vec2(sin(time*10.0 + float(i))*2.0, 0.0);
                 float trailCircle = circle(uv, trailPos, 10.0 - float(i) * 1.5);
                 float fade = 1.0 - float(i) / 6.0;
                 col += shipCol * trailCircle * fade * 0.6;
@@ -332,7 +328,7 @@
         }
     `;
 
-    // --- WebGL Boilerplate ---
+    // --- WebGL Setup ---
     function createShader(gl, type, source) {
         const shader = gl.createShader(type);
         gl.shaderSource(shader, source);
@@ -401,14 +397,13 @@
         }
         
         update(dt) {
-            // Движение вниз с учетом скорости
             this.y += speed * 250 * dt;
         }
         
         checkCollision(sx, sy) {
             const dx = this.x - sx;
             const dy = this.y - sy;
-            return Math.sqrt(dx * dx + dy * dy) < 30; // Радиус коллизии
+            return Math.sqrt(dx * dx + dy * dy) < 30;
         }
     }
 
@@ -419,10 +414,9 @@
         const rand = Math.random();
         let type;
         
-        // Баланс спавна
-        if (rand < 0.25) type = 'alien';      // Редкие, ценные
-        else if (rand < 0.70) type = 'dust';  // Обычные
-        else type = 'obstacle';               // Опасные
+        if (rand < 0.25) type = 'alien';
+        else if (rand < 0.70) type = 'dust';
+        else type = 'obstacle';
         
         entities.push(new Entity(x, y, type));
     }
@@ -432,7 +426,6 @@
         msg.textContent = text;
         msg.classList.add('msg-show');
         
-        // Очистка предыдущего таймера если нужно
         if (msg.timeout) clearTimeout(msg.timeout);
         
         msg.timeout = setTimeout(() => {
@@ -442,13 +435,19 @@
 
     // --- Input Handling ---
     function handleMove(x, y) {
-        // Ограничиваем позицию в пределах экрана
         targetX = Math.max(20, Math.min(width - 20, x));
         targetY = Math.max(20, Math.min(height - 20, y));
     }
 
-    canvas.addEventListener('mousemove', (e) => {
+    // CRITICAL FIX: Добавляем обработку события mousedown для начала движения
+    canvas.addEventListener('mousedown', (e) => {
         handleMove(e.clientX, e.clientY);
+    });
+    
+    canvas.addEventListener('mousemove', (e) => {
+        if (e.buttons === 1) { // Только при зажатой кнопке мыши
+            handleMove(e.clientX, e.clientY);
+        }
     });
 
     canvas.addEventListener('touchmove', (e) => {
@@ -469,11 +468,11 @@
     const spawnInterval = 0.6;
 
     function render(timeMs) {
-        timeMs *= 0.001; // Convert to seconds
-        const dt = Math.min(timeMs - lastTime, 0.1); // Cap delta time
+        timeMs *= 0.001;
+        const dt = Math.min(timeMs - lastTime, 0.1);
         lastTime = timeMs;
         
-        // Smooth Ship Movement (Lerp)
+        // Smooth Ship Movement
         shipX += (targetX - shipX) * 0.1;
         shipY += (targetY - shipY) * 0.1;
         
@@ -484,7 +483,7 @@
         // Update Uniforms
         gl.uniform2f(resolutionLoc, width, height);
         gl.uniform1f(timeLoc, timeMs);
-        gl.uniform2f(shipLoc, shipX, height - shipY); // Flip Y for WebGL
+        gl.uniform2f(shipLoc, shipX, height - shipY);
         gl.uniform1f(speedLoc, speed);
         gl.uniform1f(sectorPhaseLoc, sectorPhase);
 
@@ -518,10 +517,9 @@
                 }
             }
 
-            // Remove off-screen
+            // FIX: Правильное удаление объектов
             if (e.y > height + 100 || e.collected) {
-                if(e.collected) entities.splice(i, 1);
-                else if (e.y > height + 100) entities.splice(i, 1);
+                entities.splice(i, 1);
             }
         }
 
@@ -529,19 +527,19 @@
         if (xdust > sector * 200) {
             sector++;
             speed += 0.1;
-            sectorPhase = (sector % 10) / 10.0; // Shift colors
+            sectorPhase = (sector % 10) / 10.0;
             showMessage(`⚠️ SECTOR ${sector} ⚠️`, 2000);
             if (tg) tg.HapticFeedback?.notificationOccurred('warning');
         }
 
         // Pass Entity Data to Shader
-        const entityData = new Float32Array(300); // 100 entities * 3 coords
+        const entityData = new Float32Array(300);
         const visibleEntities = entities.slice(0, 100);
         
         for (let i = 0; i < visibleEntities.length; i++) {
             const e = visibleEntities[i];
             entityData[i * 3] = e.x;
-            entityData[i * 3 + 1] = height - e.y; // Flip Y
+            entityData[i * 3 + 1] = height - e.y;
             entityData[i * 3 + 2] = e.typeNum;
         }
         
