@@ -129,24 +129,35 @@
     let bassLevel = 0; 
     let trebleLevel = 0;
 
+    // --- Audio initialization and overlay START button handler for Telegram Mini App ---
     function initAudio() {
-        // Создаем контекст внутри реакции на клик пользователя
+        if(audioCtx) return; // Уже инициализировано
+
         const AudioContext = window.AudioContext || window.webkitAudioContext;
         audioCtx = new AudioContext();
-        
-        // ЖЕСТКИЙ ФИКС: Принудительный resume сразу после создания
-        if (audioCtx.state === 'suspended') {
+
+        // Промежуточный gain
+        const masterGain = audioCtx.createGain();
+        masterGain.gain.value = 0.8;
+
+        analyser = audioCtx.createAnalyser();
+        analyser.fftSize = 256;
+        dataArray = new Uint8Array(analyser.frequencyBinCount);
+
+        analyser.connect(masterGain);
+        masterGain.connect(audioCtx.destination);
+
+        // Принудительно резюмируем сразу
+        if(audioCtx.state === 'suspended') {
             audioCtx.resume().then(() => {
                 console.log('Audio Context Resumed');
+                // Маленький щелчок, чтобы "разбудить" звук
+                playTone(440, 'sine', 0.05, 0.1);
             });
+        } else {
+            playTone(440, 'sine', 0.05, 0.1);
         }
-        
-        analyser = audioCtx.createAnalyser();
-        analyser.fftSize = 256; 
-        dataArray = new Uint8Array(analyser.frequencyBinCount);
-        
-        analyser.connect(audioCtx.destination);
-        
+
         nextNoteTime = audioCtx.currentTime;
         scheduler();
     }
@@ -346,15 +357,16 @@
     window.addEventListener('resize', resize);
     resize();
 
-    // Кнопка СТАРТ (самый надежный триггер аудио)
+    // Обработчик кнопки START
     document.getElementById('startBtn').addEventListener('click', () => {
         document.getElementById('overlay').style.display = 'none';
         isStarted = true;
-        initAudio(); // Создаем контекст СЮДА
+
+        initAudio(); // Создаем AudioContext внутри события
         if(tg) tg.HapticFeedback.impactOccurred('medium');
     });
 
-    // Страховка звука от жеста на экране (если клик мимо кнопки)
+    // Страховка: клик/тач мимо кнопки
     document.body.addEventListener('touchstart', () => {
         if(audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
     }, {passive:true});
