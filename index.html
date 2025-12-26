@@ -181,12 +181,17 @@
     let isPaused = false;
     
     // --- Audio System (Synthesizer) ---
-    const AudioCtx = window.AudioContext || window.webkitAudioContext;
-    const audioCtx = new AudioCtx();
+    let audioCtx = null;
+
+    function initAudio() {
+        if(!audioCtx) {
+            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        }
+    }
 
     function playSynthSound(freq, type, decay, vol) {
         if (isPaused) return;
-        if (audioCtx.state === 'suspended') audioCtx.resume();
+        if(!audioCtx) return;
 
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
@@ -406,6 +411,7 @@
         targetY = t.clientY;
         
         // Разблокируем аудио при первом взаимодействии (требование браузеров)
+        initAudio();
         if(audioCtx.state === 'suspended') audioCtx.resume();
     };
     
