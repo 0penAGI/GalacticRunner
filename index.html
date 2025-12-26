@@ -288,8 +288,8 @@
             vec2 p = uv * 3.0;
             
             vec2 q, r;
-            float t_mod = time * (1.0 + bass * 0.2);
-            float f = pattern(p + t_mod * 0.1, q, r);
+            float t_mod = time * (0.3 + bass * 0.001);
+            float f = pattern(p + t_mod * 0.001, q, r);
             
             vec3 col = mix(vec3(0.0, 0.05, 0.1), vec3(0.1, 0.0, 0.2), f);
             col = mix(col, vec3(0.0, 0.3, 0.4), length(q));
