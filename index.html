@@ -1,23 +1,29 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="ru">
 <head>
     <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Galactic X-Dust Runner</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Galactic X-Dust Runner: Liquid Edition</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
+        :root {
+            --neon-blue: #00ffff;
+            --neon-pink: #ff00ff;
+            --neon-green: #00ff00;
+        }
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
+            user-select: none;
+            -webkit-user-select: none;
         }
         body {
             overflow: hidden;
             background: #000;
             font-family: 'Courier New', monospace;
-            color: #0ff;
-            touch-action: none;
+            color: var(--neon-blue);
+            touch-action: none; /* Critical for game controls */
         }
         canvas {
             display: block;
@@ -26,180 +32,129 @@
             position: absolute;
             top: 0;
             left: 0;
+            z-index: 1;
         }
-        #feedback-canvas {
-            mix-blend-mode: screen;
-            opacity: 0.7;
-        }
-        #hud {
+        #ui-layer {
             position: absolute;
             top: 0;
             left: 0;
             width: 100%;
-            padding: 15px;
+            height: 100%;
             pointer-events: none;
-            text-shadow: 0 0 10px #0ff;
             z-index: 10;
         }
-        .hud-row {
+        .hud-panel {
+            position: absolute;
+            top: 15px;
+            left: 15px;
+            right: 15px;
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 16px;
+            align-items: flex-start;
         }
-        #xdust {
-            color: #f0f;
-            font-size: 20px;
-            font-weight: bold;
+        .stat-box {
+            background: rgba(0, 0, 0, 0.5);
+            border: 1px solid rgba(0, 255, 255, 0.3);
+            padding: 10px;
+            border-radius: 8px;
+            backdrop-filter: blur(4px);
         }
-        #level { color: #ff0; }
-        #aliens { color: #0f0; }
-        #message {
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 4px;
+            font-size: 14px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        #score-val { color: var(--neon-pink); font-weight: bold; font-size: 18px; }
+        #sector-val { color: #ffff00; }
+        #aliens-val { color: var(--neon-green); }
+        
+        #message-overlay {
             position: absolute;
             top: 50%;
             left: 50%;
             transform: translate(-50%, -50%);
-            font-size: 36px;
+            font-size: 32px;
+            font-weight: bold;
             text-align: center;
+            color: #fff;
             opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
-            text-shadow: 0 0 20px #0ff;
-            z-index: 20;
+            transition: opacity 0.3s, transform 0.3s;
+            text-shadow: 0 0 20px var(--neon-blue);
+            width: 100%;
         }
-        .show { opacity: 1 !important; }
-        #user-info {
+        .msg-show {
+            opacity: 1 !important;
+            transform: translate(-50%, -50%) scale(1.1) !important;
+        }
+        #controls-hint {
             position: absolute;
-            bottom: 10px;
-            left: 10px;
+            bottom: 20px;
+            width: 100%;
+            text-align: center;
             font-size: 12px;
-            color: #666;
-            z-index: 10;
+            color: rgba(255, 255, 255, 0.4);
+            animation: pulse 2s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 0.3; }
+            50% { opacity: 0.7; }
         }
     </style>
 </head>
 <body>
-    <canvas id="feedback-canvas"></canvas>
+
     <canvas id="canvas"></canvas>
-    <div id="hud">
-        <div class="hud-row">
-            <div id="xdust">$XDUST: 0</div>
-            <div id="level">SECTOR: 1</div>
+
+    <div id="ui-layer">
+        <div class="hud-panel">
+            <div class="stat-box">
+                <div class="stat-row"><span>$XDUST</span> <span id="score-val">0</span></div>
+                <div class="stat-row"><span>Sector</span> <span id="sector-val">1</span></div>
+            </div>
+            <div class="stat-box">
+                <div class="stat-row"><span>Aliens</span> <span id="aliens-val">0</span></div>
+                <div class="stat-row"><span>Speed</span> <span id="speed-val">1.0</span>x</div>
+            </div>
         </div>
-        <div class="hud-row">
-            <div id="aliens">👽: 0</div>
-            <div>SPEED: <span id="speed">1.0</span>x</div>
-        </div>
+        
+        <div id="message-overlay"></div>
+        <div id="controls-hint">Веди пальцем или мышкой, чтобы управлять потоком</div>
     </div>
-    <div id="message"></div>
-    <div id="user-info"></div>
 
 <script>
-    // AUDIO ENGINE - живой звук космоса
-    let audioInitialized = false;
-    let ambientSynth, dustSynth, alienSynth, obstacleSynth, feedbackDelay, reverb, filter;
-
-    async function initAudio() {
-        if (audioInitialized) return;
-        audioInitialized = true;
-        await Tone.start();
-
-        reverb = new Tone.Reverb({decay: 8, wet: 0.4}).toDestination();
-        feedbackDelay = new Tone.FeedbackDelay("8n", 0.6).connect(reverb);
-        filter = new Tone.AutoFilter("0.5hz").connect(feedbackDelay).start();
-
-        // ambient drone - космическое дыхание
-        ambientSynth = new Tone.PolySynth(Tone.AMSynth, {
-            harmonicity: 3.5,
-            modulationIndex: 12,
-            envelope: {attack: 2, decay: 1, sustain: 0.8, release: 3}
-        }).connect(filter);
-
-        // dust sparkle - кристаллы
-        dustSynth = new Tone.MetalSynth({
-            frequency: 800,
-            envelope: {attack: 0.001, decay: 0.2, release: 0.3},
-            harmonicity: 12,
-            modulationIndex: 40,
-            resonance: 3000,
-            octaves: 1.5
-        }).connect(reverb);
-
-        // alien encounter - контакт
-        alienSynth = new Tone.DuoSynth({
-            voice0: {oscillator: {type: "sawtooth"}, envelope: {attack: 0.05, decay: 0.2}},
-            voice1: {oscillator: {type: "sine"}, envelope: {attack: 0.05, decay: 0.2}},
-            vibratoRate: 5,
-            vibratoAmount: 0.5
-        }).connect(feedbackDelay);
-
-        // obstacle danger - искажение
-        obstacleSynth = new Tone.NoiseSynth({
-            noise: {type: "pink"},
-            envelope: {attack: 0.005, decay: 0.1, sustain: 0}
-        }).connect(reverb);
-
-        // живое дыхание космоса
-        function breathe() {
-            const notes = ["C2", "G2", "C3", "E3"];
-            const note = notes[Math.floor(Math.random() * notes.length)];
-            ambientSynth.triggerAttackRelease(note, "4n", undefined, 0.05 + Math.random() * 0.1);
-            setTimeout(breathe, 3000 + Math.random() * 5000);
-        }
-        breathe();
-    }
-
-    function playDust() {
-        if (!audioInitialized) return;
-        const freq = 600 + Math.random() * 800;
-        dustSynth.frequency.value = freq;
-        dustSynth.triggerAttackRelease("32n");
-    }
-
-    function playAlien() {
-        if (!audioInitialized) return;
-        const notes = ["E4", "G4", "B4", "D5"];
-        alienSynth.triggerAttackRelease(notes, "8n");
-    }
-
-    function playObstacle() {
-        if (!audioInitialized) return;
-        obstacleSynth.triggerAttackRelease("16n");
-    }
-
-    // TELEGRAM
+    // --- Telegram WebApp Init ---
     const tg = window.Telegram?.WebApp;
     if (tg) {
         tg.ready();
         tg.expand();
-        const user = tg.initDataUnsafe?.user;
-        if (user) {
-            document.getElementById('user-info').textContent = 
-                `Player: ${user.first_name || 'Unknown'} (ID: ${user.id})`;
-        }
+        // Применяем тему Telegram если есть
+        document.documentElement.style.setProperty('--tg-theme-bg-color', tg.themeParams.bg_color || '#000');
     }
 
-    // FEEDBACK CANVAS - текучий след
-    const fbCanvas = document.getElementById('feedback-canvas');
-    const fbCtx = fbCanvas.getContext('2d', {alpha: true});
-    fbCanvas.width = window.innerWidth;
-    fbCanvas.height = window.innerHeight;
-
-    // MAIN CANVAS
     const canvas = document.getElementById('canvas');
-    const gl = canvas.getContext('webgl2');
-    if (!gl) alert('WebGL2 not supported');
+    const gl = canvas.getContext('webgl2', { alpha: false, antialias: false }); // Optimize for perf
+    
+    if (!gl) {
+        alert('Ваш браузер не поддерживает WebGL 2. Необходима живая краска.');
+        throw new Error('WebGL2 not supported');
+    }
 
+    // --- Setup & Resize ---
     let width = canvas.width = window.innerWidth;
     let height = canvas.height = window.innerHeight;
 
     window.addEventListener('resize', () => {
-        width = canvas.width = fbCanvas.width = window.innerWidth;
-        height = canvas.height = fbCanvas.height = window.innerHeight;
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
         gl.viewport(0, 0, width, height);
     });
 
-    // SHADERS
+    // --- Shaders ---
+    
+    // 1. Vertex Shader (Standard)
     const vertexShaderSource = `#version 300 es
         in vec2 position;
         void main() {
@@ -207,6 +162,7 @@
         }
     `;
 
+    // 2. Fragment Shader (Liquid Paint Patch Applied)
     const fragmentShaderSource = `#version 300 es
         precision highp float;
         
@@ -215,12 +171,12 @@
         uniform vec2 ship;
         uniform float speed;
         uniform float sectorPhase;
-        uniform vec3 entities[100];
+        uniform vec3 entities[100]; 
         uniform int entityCount;
-        uniform float audioEnergy;
         
         out vec4 fragColor;
         
+        // --- BASE NOISE ---
         float hash(vec2 p) {
             return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
         }
@@ -229,13 +185,33 @@
             vec2 i = floor(p);
             vec2 f = fract(p);
             f = f * f * (3.0 - 2.0 * f);
+            
             float a = hash(i);
             float b = hash(i + vec2(1.0, 0.0));
             float c = hash(i + vec2(0.0, 1.0));
             float d = hash(i + vec2(1.0, 1.0));
+            
             return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         }
         
+        // 🩸 PATCH 1: Add FBM and Flow
+        float fbm(vec2 p) {
+            float v = 0.0;
+            float a = 0.5;
+            for (int i = 0; i < 5; i++) {
+                v += a * noise(p);
+                p *= 2.0;
+                a *= 0.5;
+            }
+            return v;
+        }
+
+        vec2 flow(vec2 p, float t) {
+            float n1 = fbm(p * 0.6 + t * 0.05);
+            float n2 = fbm(p * 0.6 - t * 0.04);
+            return vec2(n1, n2) - 0.5;
+        }
+
         vec3 palette(float t, float phase) {
             vec3 a = vec3(0.5, 0.5, 0.5);
             vec3 b = vec3(0.5, 0.5, 0.5);
@@ -244,6 +220,7 @@
             return a + b * cos(6.28318 * (c * t + d));
         }
         
+        // --- HELPERS ---
         float circle(vec2 uv, vec2 pos, float radius) {
             return 1.0 - smoothstep(radius - 2.0, radius + 2.0, length(uv - pos));
         }
@@ -257,100 +234,112 @@
             vec2 uv = gl_FragCoord.xy;
             vec2 shipPos = ship;
             
+            // === BACKGROUND (LIQUID PAINT) ===
+            
+            // 🩸 PATCH 2: Distort UV as liquid
             vec2 scrollUv = uv / resolution;
-            scrollUv.y += time * speed * 0.3;
-            
-            // displacement от звука
-            float disp = audioEnergy * 0.02;
-            scrollUv.x += sin(scrollUv.y * 10.0 + time) * disp;
-            scrollUv.y += cos(scrollUv.x * 10.0 + time) * disp;
-            
-            float dust = 0.0;
-            for(int i = 0; i < 4; i++) {
-                float layer = float(i) + 1.0;
-                vec2 p = scrollUv * layer * 3.0;
-                p.y += time * speed * layer * 0.5;
-                float n = noise(p);
-                n = smoothstep(0.45, 0.55, n);
-                dust += n * (1.0 / layer);
-            }
-            
+            vec2 flowUv = scrollUv * 2.5;
+            vec2 f = flow(flowUv, time * speed);
+            scrollUv += f * 0.15;
+
+            // Tunnel effect (still needed for depth focus)
             vec2 toShip = scrollUv - shipPos / resolution;
             float distToShip = length(toShip);
             float tunnel = 1.0 - exp(-distToShip * 2.0);
             
-            vec2 nebulaUv = scrollUv * 2.0;
-            nebulaUv.y += time * speed * 0.1;
-            float nebula = 0.0;
-            for(int i = 0; i < 3; i++) {
-                nebula += noise(nebulaUv * float(i + 1) * 0.5) / float(i + 2);
-            }
+            // 🩸 PATCH 3: Dust -> Viscous Pigment
+            float dust = fbm(scrollUv * 4.0 + time * speed * 0.3);
+            dust = smoothstep(0.35, 0.75, dust);
             
-            float pattern = dust * 0.7 + nebula * 0.3;
+            // 🩸 PATCH 4: Fog -> Oil Clouds
+            vec2 nebulaUv = scrollUv * 1.5;
+            nebulaUv += flow(nebulaUv, time * 0.3) * 0.4;
+            float nebula = fbm(nebulaUv * 2.0);
+            
+            // 🩸 PATCH 5: Color becomes alive
+            float pattern = mix(dust, nebula, 0.5);
+            pattern = pow(pattern, 1.2); // Increase contrast
+            
+            // Apply pattern with tunnel depth
             pattern *= tunnel;
-            pattern += audioEnergy * 0.1;
+
+            vec3 col = palette(pattern + time * 0.05, sectorPhase);
+            col += vec3(0.1, 0.05, 0.15) * pattern; // Subtle tint overlay
             
-            vec3 col = palette(pattern + time * 0.1, sectorPhase);
-            
+            // Stars (Sparse, for texture)
             float stars = 0.0;
-            vec2 starUv = floor(scrollUv * 100.0);
-            if(hash(starUv) > 0.97) {
-                float twinkle = 0.5 + 0.5 * sin(time * 3.0 + hash(starUv) * 100.0);
-                stars = twinkle;
+            vec2 starUv = floor(scrollUv * 150.0); // More sparse
+            if(hash(starUv) > 0.985) {
+                float twinkle = 0.5 + 0.5 * sin(time * 5.0 + hash(starUv) * 100.0);
+                stars = twinkle * hash(starUv); // Random brightness
             }
-            col += vec3(stars) * 0.8;
+            col += vec3(stars) * 0.5;
             
-            float vignette = 1.0 - distToShip * 0.3;
-            col *= vignette;
+            // Vignette
+            col *= 1.0 - distToShip * 0.5;
             
+            // === GAME ENTITIES ===
             for(int i = 0; i < entityCount && i < 100; i++) {
                 vec3 entity = entities[i];
                 vec2 entityPos = entity.xy;
                 float entityType = entity.z;
+                
                 float c = circle(uv, entityPos, 20.0);
                 
                 if(c > 0.0) {
                     if(entityType < 0.5) {
-                        vec3 dustCol = vec3(1.0, 1.0, 0.5);
-                        float sparkle = 0.5 + 0.5 * sin(time * 10.0 + float(i));
+                        // Dust - Golden sparkle
+                        vec3 dustCol = vec3(1.0, 0.9, 0.4);
+                        float sparkle = 0.7 + 0.3 * sin(time * 15.0 + float(i));
                         col = mix(col, dustCol, c * sparkle);
                     } else if(entityType < 1.5) {
-                        vec3 alienCol = vec3(0.0, 1.0, 0.5);
-                        float pulse = 0.7 + 0.3 * sin(time * 5.0 + float(i));
+                        // Alien - Bio-glow
+                        vec3 alienCol = vec3(0.2, 1.0, 0.6);
+                        float pulse = 0.6 + 0.4 * sin(time * 8.0 + float(i));
                         col = mix(col, alienCol, c * pulse);
                     } else {
-                        vec3 obstacleCol = vec3(1.0, 0.2, 0.0);
-                        float danger = 0.6 + 0.4 * sin(time * 8.0);
+                        // Obstacle - Hot warning
+                        vec3 obstacleCol = vec3(1.0, 0.1, 0.1);
+                        float danger = 0.7 + 0.3 * sin(time * 20.0);
                         col = mix(col, obstacleCol, c * danger);
                     }
                 }
             }
             
+            // === PLAYER SHIP ===
             float shipEffect = shipGlow(uv, shipPos);
             vec3 shipCol = vec3(0.0, 1.0, 1.0);
+            
+            // Ship core
             float shipCore = circle(uv, shipPos, 15.0);
             col = mix(col, shipCol, shipCore);
-            col += shipCol * shipEffect * 0.3;
             
+            // Ship glow (intense)
+            col += shipCol * shipEffect * 0.4;
+            
+            // Ship trail (fluid-like)
             vec2 trailDir = vec2(0.0, 1.0);
-            for(int i = 0; i < 5; i++) {
-                float offset = float(i) * 10.0;
-                vec2 trailPos = shipPos + trailDir * offset;
-                float trailCircle = circle(uv, trailPos, 8.0 - float(i) * 1.5);
-                float fade = 1.0 - float(i) / 5.0;
-                col += shipCol * trailCircle * fade * 0.5;
+            for(int i = 0; i < 6; i++) {
+                float offset = float(i) * 12.0;
+                // Distort trail slightly with noise for "liquid" feel
+                vec2 trailPos = shipPos + trailDir * offset + vec2(sin(time*10.0 + float(i))*2.0, 0.0); 
+                float trailCircle = circle(uv, trailPos, 10.0 - float(i) * 1.5);
+                float fade = 1.0 - float(i) / 6.0;
+                col += shipCol * trailCircle * fade * 0.6;
             }
             
             fragColor = vec4(col, 1.0);
         }
     `;
 
+    // --- WebGL Boilerplate ---
     function createShader(gl, type, source) {
         const shader = gl.createShader(type);
         gl.shaderSource(shader, source);
         gl.compileShader(shader);
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-            console.error(gl.getShaderInfoLog(shader));
+            console.error('Shader Compile Error:', gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
             return null;
         }
         return shader;
@@ -358,12 +347,19 @@
 
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
     const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
     const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+        console.error('Program Link Error:', gl.getProgramInfoLog(program));
+    }
+
     gl.useProgram(program);
 
+    // Buffer setup
     const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
     const buffer = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
@@ -373,6 +369,7 @@
     gl.enableVertexAttribArray(positionLoc);
     gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
 
+    // Uniforms
     const resolutionLoc = gl.getUniformLocation(program, 'resolution');
     const timeLoc = gl.getUniformLocation(program, 'time');
     const shipLoc = gl.getUniformLocation(program, 'ship');
@@ -380,20 +377,19 @@
     const sectorPhaseLoc = gl.getUniformLocation(program, 'sectorPhase');
     const entitiesLoc = gl.getUniformLocation(program, 'entities');
     const entityCountLoc = gl.getUniformLocation(program, 'entityCount');
-    const audioEnergyLoc = gl.getUniformLocation(program, 'audioEnergy');
 
-    // GAME STATE
+    // --- Game State ---
     let shipX = width / 2;
-    let shipY = height * 0.75;
+    let shipY = height * 0.8;
+    let targetX = shipX;
+    let targetY = shipY;
     let xdust = 0;
     let aliens = 0;
     let sector = 1;
     let speed = 1.0;
-    let sectorPhase = 0;
-    let audioEnergy = 0;
-
+    let sectorPhase = 0.0;
+    
     const entities = [];
-    const shipTrail = [];
     
     class Entity {
         constructor(x, y, type) {
@@ -405,131 +401,101 @@
         }
         
         update(dt) {
-            this.y += speed * 300 * dt;
+            // Движение вниз с учетом скорости
+            this.y += speed * 250 * dt;
         }
         
         checkCollision(sx, sy) {
             const dx = this.x - sx;
             const dy = this.y - sy;
-            return Math.sqrt(dx * dx + dy * dy) < 35;
+            return Math.sqrt(dx * dx + dy * dy) < 30; // Радиус коллизии
         }
     }
 
+    // --- Spawning Logic ---
     function spawnEntity() {
         const x = Math.random() * width;
         const y = -50;
         const rand = Math.random();
-        let type = rand < 0.3 ? 'alien' : rand < 0.65 ? 'dust' : 'obstacle';
+        let type;
+        
+        // Баланс спавна
+        if (rand < 0.25) type = 'alien';      // Редкие, ценные
+        else if (rand < 0.70) type = 'dust';  // Обычные
+        else type = 'obstacle';               // Опасные
+        
         entities.push(new Entity(x, y, type));
     }
 
     function showMessage(text, duration = 1000) {
-        const msg = document.getElementById('message');
+        const msg = document.getElementById('message-overlay');
         msg.textContent = text;
-        msg.classList.add('show');
-        setTimeout(() => msg.classList.remove('show'), duration);
+        msg.classList.add('msg-show');
+        
+        // Очистка предыдущего таймера если нужно
+        if (msg.timeout) clearTimeout(msg.timeout);
+        
+        msg.timeout = setTimeout(() => {
+            msg.classList.remove('msg-show');
+        }, duration);
     }
 
-    let spawnTimer = 0;
-    const spawnInterval = 0.7;
-    let targetX = shipX;
-    let targetY = shipY;
-
+    // --- Input Handling ---
     function handleMove(x, y) {
-        targetX = x;
-        targetY = y;
+        // Ограничиваем позицию в пределах экрана
+        targetX = Math.max(20, Math.min(width - 20, x));
+        targetY = Math.max(20, Math.min(height - 20, y));
     }
 
-    canvas.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
+    canvas.addEventListener('mousemove', (e) => {
+        handleMove(e.clientX, e.clientY);
+    });
+
     canvas.addEventListener('touchmove', (e) => {
         e.preventDefault();
-        handleMove(e.touches[0].clientX, e.touches[0].clientY);
-    });
+        const touch = e.touches[0];
+        handleMove(touch.clientX, touch.clientY);
+    }, { passive: false });
+
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        handleMove(e.touches[0].clientX, e.touches[0].clientY);
-        initAudio();
-    });
-    canvas.addEventListener('click', initAudio);
+        const touch = e.touches[0];
+        handleMove(touch.clientX, touch.clientY);
+    }, { passive: false });
 
+    // --- Main Loop ---
     let lastTime = 0;
+    let spawnTimer = 0;
+    const spawnInterval = 0.6;
 
-    // FEEDBACK RENDER - текучий живой след
-    function renderFeedback() {
-        fbCtx.fillStyle = 'rgba(0, 0, 0, 0.08)'; // затухание
-        fbCtx.fillRect(0, 0, fbCanvas.width, fbCanvas.height);
+    function render(timeMs) {
+        timeMs *= 0.001; // Convert to seconds
+        const dt = Math.min(timeMs - lastTime, 0.1); // Cap delta time
+        lastTime = timeMs;
         
-        // displacement эффект
-        const imageData = fbCtx.getImageData(0, 0, fbCanvas.width, fbCanvas.height);
-        const displaced = fbCtx.createImageData(fbCanvas.width, fbCanvas.height);
-        
-        for (let y = 0; y < fbCanvas.height; y++) {
-            for (let x = 0; x < fbCanvas.width; x++) {
-                const dx = Math.sin(y * 0.01 + performance.now() * 0.001) * audioEnergy * 3;
-                const dy = Math.cos(x * 0.01 + performance.now() * 0.001) * audioEnergy * 3;
-                const sx = Math.floor(x + dx);
-                const sy = Math.floor(y + dy);
-                
-                if (sx >= 0 && sx < fbCanvas.width && sy >= 0 && sy < fbCanvas.height) {
-                    const si = (sy * fbCanvas.width + sx) * 4;
-                    const di = (y * fbCanvas.width + x) * 4;
-                    displaced.data[di] = imageData.data[si];
-                    displaced.data[di + 1] = imageData.data[si + 1];
-                    displaced.data[di + 2] = imageData.data[si + 2];
-                    displaced.data[di + 3] = imageData.data[si + 3];
-                }
-            }
-        }
-        fbCtx.putImageData(displaced, 0, 0);
-        
-        // ship trail particles
-        shipTrail.push({x: shipX, y: shipY, life: 1});
-        
-        fbCtx.globalCompositeOperation = 'lighter';
-        for (let i = shipTrail.length - 1; i >= 0; i--) {
-            const p = shipTrail[i];
-            p.life -= 0.02;
-            if (p.life <= 0) {
-                shipTrail.splice(i, 1);
-                continue;
-            }
-            
-            const hue = (sectorPhase * 360 + performance.now() * 0.1) % 360;
-            fbCtx.fillStyle = `hsla(${hue}, 80%, 60%, ${p.life * 0.5})`;
-            fbCtx.beginPath();
-            fbCtx.arc(p.x, p.y, 15 * p.life, 0, Math.PI * 2);
-            fbCtx.fill();
-        }
-        fbCtx.globalCompositeOperation = 'source-over';
-    }
-
-    function render(time) {
-        time *= 0.001;
-        const dt = Math.min(time - lastTime, 0.1);
-        lastTime = time;
-        
-        shipX += (targetX - shipX) * 0.15;
-        shipY += (targetY - shipY) * 0.15;
-        
-        audioEnergy *= 0.95; // затухание
+        // Smooth Ship Movement (Lerp)
+        shipX += (targetX - shipX) * 0.1;
+        shipY += (targetY - shipY) * 0.1;
         
         gl.viewport(0, 0, width, height);
         gl.clearColor(0, 0, 0, 1);
         gl.clear(gl.COLOR_BUFFER_BIT);
 
+        // Update Uniforms
         gl.uniform2f(resolutionLoc, width, height);
-        gl.uniform1f(timeLoc, time);
-        gl.uniform2f(shipLoc, shipX, height - shipY);
+        gl.uniform1f(timeLoc, timeMs);
+        gl.uniform2f(shipLoc, shipX, height - shipY); // Flip Y for WebGL
         gl.uniform1f(speedLoc, speed);
         gl.uniform1f(sectorPhaseLoc, sectorPhase);
-        gl.uniform1f(audioEnergyLoc, audioEnergy);
 
+        // Game Logic
         spawnTimer += dt;
         if (spawnTimer > spawnInterval / speed) {
             spawnEntity();
             spawnTimer = 0;
         }
 
+        // Update Entities & Collisions
         for (let i = entities.length - 1; i >= 0; i--) {
             const e = entities[i];
             e.update(dt);
@@ -540,61 +506,62 @@
                 if (e.type === 'alien') {
                     aliens++;
                     xdust += 50;
-                    showMessage('👽 +50 $XDUST!');
-                    audioEnergy = 1.5;
-                    playAlien();
+                    showMessage('👽 +50 $XDUST');
                     if (tg) tg.HapticFeedback?.notificationOccurred('success');
                 } else if (e.type === 'dust') {
                     xdust += 10;
-                    audioEnergy = 0.5;
-                    playDust();
                     if (tg) tg.HapticFeedback?.impactOccurred('light');
                 } else if (e.type === 'obstacle') {
                     xdust = Math.max(0, xdust - 20);
-                    showMessage('💥 -20 $XDUST!');
-                    audioEnergy = 2.0;
-                    playObstacle();
+                    showMessage('💥 -20 $XDUST');
                     if (tg) tg.HapticFeedback?.notificationOccurred('error');
                 }
             }
 
-            if (e.y > height + 100) entities.splice(i, 1);
+            // Remove off-screen
+            if (e.y > height + 100 || e.collected) {
+                if(e.collected) entities.splice(i, 1);
+                else if (e.y > height + 100) entities.splice(i, 1);
+            }
         }
 
+        // Level Up Logic
         if (xdust > sector * 200) {
             sector++;
-            speed += 0.2;
-            sectorPhase = (sector % 10) / 10;
-            showMessage(`🌌 SECTOR ${sector}!`, 2000);
-            audioEnergy = 2.5;
-            if (tg) tg.HapticFeedback?.notificationOccurred('success');
+            speed += 0.1;
+            sectorPhase = (sector % 10) / 10.0; // Shift colors
+            showMessage(`⚠️ SECTOR ${sector} ⚠️`, 2000);
+            if (tg) tg.HapticFeedback?.notificationOccurred('warning');
         }
 
-        const entityData = new Float32Array(300);
-        const visibleEntities = entities.filter(e => !e.collected).slice(0, 100);
+        // Pass Entity Data to Shader
+        const entityData = new Float32Array(300); // 100 entities * 3 coords
+        const visibleEntities = entities.slice(0, 100);
         
         for (let i = 0; i < visibleEntities.length; i++) {
             const e = visibleEntities[i];
             entityData[i * 3] = e.x;
-            entityData[i * 3 + 1] = height - e.y;
+            entityData[i * 3 + 1] = height - e.y; // Flip Y
             entityData[i * 3 + 2] = e.typeNum;
         }
         
         gl.uniform3fv(entitiesLoc, entityData);
         gl.uniform1i(entityCountLoc, visibleEntities.length);
+
+        // Draw
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
-        renderFeedback();
-
-        document.getElementById('xdust').textContent = `$XDUST: ${xdust}`;
-        document.getElementById('level').textContent = `SECTOR: ${sector}`;
-        document.getElementById('aliens').textContent = `👽: ${aliens}`;
-        document.getElementById('speed').textContent = speed.toFixed(1);
+        // Update UI
+        document.getElementById('score-val').textContent = xdust;
+        document.getElementById('sector-val').textContent = sector;
+        document.getElementById('aliens-val').textContent = aliens;
+        document.getElementById('speed-val').textContent = speed.toFixed(1);
 
         requestAnimationFrame(render);
     }
 
     requestAnimationFrame(render);
+
 </script>
 </body>
 </html>
