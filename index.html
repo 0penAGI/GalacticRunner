@@ -1,11 +1,11 @@
 <!DOCTYPE html>
-
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Galactic X-Dust Runner</title>
     <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
     <style>
         * {
             margin: 0;
@@ -23,6 +23,13 @@
             display: block;
             width: 100vw;
             height: 100vh;
+            position: absolute;
+            top: 0;
+            left: 0;
+        }
+        #feedback-canvas {
+            mix-blend-mode: screen;
+            opacity: 0.7;
         }
         #hud {
             position: absolute;
@@ -45,12 +52,8 @@
             font-size: 20px;
             font-weight: bold;
         }
-        #level {
-            color: #ff0;
-        }
-        #aliens {
-            color: #0f0;
-        }
+        #level { color: #ff0; }
+        #aliens { color: #0f0; }
         #message {
             position: absolute;
             top: 50%;
@@ -64,21 +67,19 @@
             text-shadow: 0 0 20px #0ff;
             z-index: 20;
         }
-        .show {
-            opacity: 1 !important;
-        }
+        .show { opacity: 1 !important; }
         #user-info {
             position: absolute;
             bottom: 10px;
             left: 10px;
             font-size: 12px;
             color: #666;
-            text-shadow: none;
             z-index: 10;
         }
     </style>
 </head>
 <body>
+    <canvas id="feedback-canvas"></canvas>
     <canvas id="canvas"></canvas>
     <div id="hud">
         <div class="hud-row">
@@ -94,12 +95,83 @@
     <div id="user-info"></div>
 
 <script>
-    // Telegram WebApp initialization
+    // AUDIO ENGINE - живой звук космоса
+    let audioInitialized = false;
+    let ambientSynth, dustSynth, alienSynth, obstacleSynth, feedbackDelay, reverb, filter;
+
+    async function initAudio() {
+        if (audioInitialized) return;
+        audioInitialized = true;
+        await Tone.start();
+
+        reverb = new Tone.Reverb({decay: 8, wet: 0.4}).toDestination();
+        feedbackDelay = new Tone.FeedbackDelay("8n", 0.6).connect(reverb);
+        filter = new Tone.AutoFilter("0.5hz").connect(feedbackDelay).start();
+
+        // ambient drone - космическое дыхание
+        ambientSynth = new Tone.PolySynth(Tone.AMSynth, {
+            harmonicity: 3.5,
+            modulationIndex: 12,
+            envelope: {attack: 2, decay: 1, sustain: 0.8, release: 3}
+        }).connect(filter);
+
+        // dust sparkle - кристаллы
+        dustSynth = new Tone.MetalSynth({
+            frequency: 800,
+            envelope: {attack: 0.001, decay: 0.2, release: 0.3},
+            harmonicity: 12,
+            modulationIndex: 40,
+            resonance: 3000,
+            octaves: 1.5
+        }).connect(reverb);
+
+        // alien encounter - контакт
+        alienSynth = new Tone.DuoSynth({
+            voice0: {oscillator: {type: "sawtooth"}, envelope: {attack: 0.05, decay: 0.2}},
+            voice1: {oscillator: {type: "sine"}, envelope: {attack: 0.05, decay: 0.2}},
+            vibratoRate: 5,
+            vibratoAmount: 0.5
+        }).connect(feedbackDelay);
+
+        // obstacle danger - искажение
+        obstacleSynth = new Tone.NoiseSynth({
+            noise: {type: "pink"},
+            envelope: {attack: 0.005, decay: 0.1, sustain: 0}
+        }).connect(reverb);
+
+        // живое дыхание космоса
+        function breathe() {
+            const notes = ["C2", "G2", "C3", "E3"];
+            const note = notes[Math.floor(Math.random() * notes.length)];
+            ambientSynth.triggerAttackRelease(note, "4n", undefined, 0.05 + Math.random() * 0.1);
+            setTimeout(breathe, 3000 + Math.random() * 5000);
+        }
+        breathe();
+    }
+
+    function playDust() {
+        if (!audioInitialized) return;
+        const freq = 600 + Math.random() * 800;
+        dustSynth.frequency.value = freq;
+        dustSynth.triggerAttackRelease("32n");
+    }
+
+    function playAlien() {
+        if (!audioInitialized) return;
+        const notes = ["E4", "G4", "B4", "D5"];
+        alienSynth.triggerAttackRelease(notes, "8n");
+    }
+
+    function playObstacle() {
+        if (!audioInitialized) return;
+        obstacleSynth.triggerAttackRelease("16n");
+    }
+
+    // TELEGRAM
     const tg = window.Telegram?.WebApp;
     if (tg) {
         tg.ready();
         tg.expand();
-        
         const user = tg.initDataUnsafe?.user;
         if (user) {
             document.getElementById('user-info').textContent = 
@@ -107,23 +179,27 @@
         }
     }
 
+    // FEEDBACK CANVAS - текучий след
+    const fbCanvas = document.getElementById('feedback-canvas');
+    const fbCtx = fbCanvas.getContext('2d', {alpha: true});
+    fbCanvas.width = window.innerWidth;
+    fbCanvas.height = window.innerHeight;
+
+    // MAIN CANVAS
     const canvas = document.getElementById('canvas');
     const gl = canvas.getContext('webgl2');
-    
-    if (!gl) {
-        alert('WebGL2 not supported');
-    }
+    if (!gl) alert('WebGL2 not supported');
 
     let width = canvas.width = window.innerWidth;
     let height = canvas.height = window.innerHeight;
 
     window.addEventListener('resize', () => {
-        width = canvas.width = window.innerWidth;
-        height = canvas.height = window.innerHeight;
+        width = canvas.width = fbCanvas.width = window.innerWidth;
+        height = canvas.height = fbCanvas.height = window.innerHeight;
         gl.viewport(0, 0, width, height);
     });
 
-    // Vertex shader for full-screen quad
+    // SHADERS
     const vertexShaderSource = `#version 300 es
         in vec2 position;
         void main() {
@@ -131,7 +207,6 @@
         }
     `;
 
-    // Fragment shader - ALL game rendering
     const fragmentShaderSource = `#version 300 es
         precision highp float;
         
@@ -140,8 +215,9 @@
         uniform vec2 ship;
         uniform float speed;
         uniform float sectorPhase;
-        uniform vec3 entities[100]; // x, y, type (0=dust, 1=alien, 2=obstacle)
+        uniform vec3 entities[100];
         uniform int entityCount;
+        uniform float audioEnergy;
         
         out vec4 fragColor;
         
@@ -153,12 +229,10 @@
             vec2 i = floor(p);
             vec2 f = fract(p);
             f = f * f * (3.0 - 2.0 * f);
-            
             float a = hash(i);
             float b = hash(i + vec2(1.0, 0.0));
             float c = hash(i + vec2(0.0, 1.0));
             float d = hash(i + vec2(1.0, 1.0));
-            
             return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
         }
         
@@ -170,12 +244,10 @@
             return a + b * cos(6.28318 * (c * t + d));
         }
         
-        // Draw circle (for entities)
         float circle(vec2 uv, vec2 pos, float radius) {
             return 1.0 - smoothstep(radius - 2.0, radius + 2.0, length(uv - pos));
         }
         
-        // Draw ship glow
         float shipGlow(vec2 uv, vec2 pos) {
             float dist = length(uv - pos);
             return 0.8 * exp(-dist * 0.05) + 0.2 * exp(-dist * 0.01);
@@ -185,28 +257,28 @@
             vec2 uv = gl_FragCoord.xy;
             vec2 shipPos = ship;
             
-            // === BACKGROUND SPACE ===
             vec2 scrollUv = uv / resolution;
             scrollUv.y += time * speed * 0.3;
             
-            // Multi-layer $XDUST particles
+            // displacement от звука
+            float disp = audioEnergy * 0.02;
+            scrollUv.x += sin(scrollUv.y * 10.0 + time) * disp;
+            scrollUv.y += cos(scrollUv.x * 10.0 + time) * disp;
+            
             float dust = 0.0;
             for(int i = 0; i < 4; i++) {
                 float layer = float(i) + 1.0;
                 vec2 p = scrollUv * layer * 3.0;
                 p.y += time * speed * layer * 0.5;
-                
                 float n = noise(p);
                 n = smoothstep(0.45, 0.55, n);
                 dust += n * (1.0 / layer);
             }
             
-            // Tunnel effect
             vec2 toShip = scrollUv - shipPos / resolution;
             float distToShip = length(toShip);
             float tunnel = 1.0 - exp(-distToShip * 2.0);
             
-            // Nebula clouds
             vec2 nebulaUv = scrollUv * 2.0;
             nebulaUv.y += time * speed * 0.1;
             float nebula = 0.0;
@@ -216,10 +288,10 @@
             
             float pattern = dust * 0.7 + nebula * 0.3;
             pattern *= tunnel;
+            pattern += audioEnergy * 0.1;
             
             vec3 col = palette(pattern + time * 0.1, sectorPhase);
             
-            // Stars
             float stars = 0.0;
             vec2 starUv = floor(scrollUv * 100.0);
             if(hash(starUv) > 0.97) {
@@ -228,31 +300,25 @@
             }
             col += vec3(stars) * 0.8;
             
-            // Vignette
             float vignette = 1.0 - distToShip * 0.3;
             col *= vignette;
             
-            // === ENTITIES ===
             for(int i = 0; i < entityCount && i < 100; i++) {
                 vec3 entity = entities[i];
                 vec2 entityPos = entity.xy;
                 float entityType = entity.z;
-                
                 float c = circle(uv, entityPos, 20.0);
                 
                 if(c > 0.0) {
                     if(entityType < 0.5) {
-                        // Dust - sparkle effect
                         vec3 dustCol = vec3(1.0, 1.0, 0.5);
                         float sparkle = 0.5 + 0.5 * sin(time * 10.0 + float(i));
                         col = mix(col, dustCol, c * sparkle);
                     } else if(entityType < 1.5) {
-                        // Alien - green glow
                         vec3 alienCol = vec3(0.0, 1.0, 0.5);
                         float pulse = 0.7 + 0.3 * sin(time * 5.0 + float(i));
                         col = mix(col, alienCol, c * pulse);
                     } else {
-                        // Obstacle - red warning
                         vec3 obstacleCol = vec3(1.0, 0.2, 0.0);
                         float danger = 0.6 + 0.4 * sin(time * 8.0);
                         col = mix(col, obstacleCol, c * danger);
@@ -260,18 +326,12 @@
                 }
             }
             
-            // === SHIP ===
             float shipEffect = shipGlow(uv, shipPos);
             vec3 shipCol = vec3(0.0, 1.0, 1.0);
-            
-            // Ship core
             float shipCore = circle(uv, shipPos, 15.0);
             col = mix(col, shipCol, shipCore);
-            
-            // Ship glow
             col += shipCol * shipEffect * 0.3;
             
-            // Ship trail
             vec2 trailDir = vec2(0.0, 1.0);
             for(int i = 0; i < 5; i++) {
                 float offset = float(i) * 10.0;
@@ -289,28 +349,19 @@
         const shader = gl.createShader(type);
         gl.shaderSource(shader, source);
         gl.compileShader(shader);
-        
         if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
             console.error(gl.getShaderInfoLog(shader));
-            gl.deleteShader(shader);
             return null;
         }
-        
         return shader;
     }
 
     const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
     const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
-
     const program = gl.createProgram();
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
     gl.linkProgram(program);
-
-    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-        console.error(gl.getProgramInfoLog(program));
-    }
-
     gl.useProgram(program);
 
     const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
@@ -329,8 +380,9 @@
     const sectorPhaseLoc = gl.getUniformLocation(program, 'sectorPhase');
     const entitiesLoc = gl.getUniformLocation(program, 'entities');
     const entityCountLoc = gl.getUniformLocation(program, 'entityCount');
+    const audioEnergyLoc = gl.getUniformLocation(program, 'audioEnergy');
 
-    // Game state
+    // GAME STATE
     let shipX = width / 2;
     let shipY = height * 0.75;
     let xdust = 0;
@@ -338,8 +390,10 @@
     let sector = 1;
     let speed = 1.0;
     let sectorPhase = 0;
+    let audioEnergy = 0;
 
     const entities = [];
+    const shipTrail = [];
     
     class Entity {
         constructor(x, y, type) {
@@ -365,12 +419,7 @@
         const x = Math.random() * width;
         const y = -50;
         const rand = Math.random();
-        let type;
-        
-        if (rand < 0.3) type = 'alien';
-        else if (rand < 0.65) type = 'dust';
-        else type = 'obstacle';
-        
+        let type = rand < 0.3 ? 'alien' : rand < 0.65 ? 'dust' : 'obstacle';
         entities.push(new Entity(x, y, type));
     }
 
@@ -383,7 +432,6 @@
 
     let spawnTimer = 0;
     const spawnInterval = 0.7;
-
     let targetX = shipX;
     let targetY = shipY;
 
@@ -392,23 +440,68 @@
         targetY = y;
     }
 
-    canvas.addEventListener('mousemove', (e) => {
-        handleMove(e.clientX, e.clientY);
-    });
-
+    canvas.addEventListener('mousemove', (e) => handleMove(e.clientX, e.clientY));
     canvas.addEventListener('touchmove', (e) => {
         e.preventDefault();
-        const touch = e.touches[0];
-        handleMove(touch.clientX, touch.clientY);
+        handleMove(e.touches[0].clientX, e.touches[0].clientY);
     });
-
     canvas.addEventListener('touchstart', (e) => {
         e.preventDefault();
-        const touch = e.touches[0];
-        handleMove(touch.clientX, touch.clientY);
+        handleMove(e.touches[0].clientX, e.touches[0].clientY);
+        initAudio();
     });
+    canvas.addEventListener('click', initAudio);
 
     let lastTime = 0;
+
+    // FEEDBACK RENDER - текучий живой след
+    function renderFeedback() {
+        fbCtx.fillStyle = 'rgba(0, 0, 0, 0.08)'; // затухание
+        fbCtx.fillRect(0, 0, fbCanvas.width, fbCanvas.height);
+        
+        // displacement эффект
+        const imageData = fbCtx.getImageData(0, 0, fbCanvas.width, fbCanvas.height);
+        const displaced = fbCtx.createImageData(fbCanvas.width, fbCanvas.height);
+        
+        for (let y = 0; y < fbCanvas.height; y++) {
+            for (let x = 0; x < fbCanvas.width; x++) {
+                const dx = Math.sin(y * 0.01 + performance.now() * 0.001) * audioEnergy * 3;
+                const dy = Math.cos(x * 0.01 + performance.now() * 0.001) * audioEnergy * 3;
+                const sx = Math.floor(x + dx);
+                const sy = Math.floor(y + dy);
+                
+                if (sx >= 0 && sx < fbCanvas.width && sy >= 0 && sy < fbCanvas.height) {
+                    const si = (sy * fbCanvas.width + sx) * 4;
+                    const di = (y * fbCanvas.width + x) * 4;
+                    displaced.data[di] = imageData.data[si];
+                    displaced.data[di + 1] = imageData.data[si + 1];
+                    displaced.data[di + 2] = imageData.data[si + 2];
+                    displaced.data[di + 3] = imageData.data[si + 3];
+                }
+            }
+        }
+        fbCtx.putImageData(displaced, 0, 0);
+        
+        // ship trail particles
+        shipTrail.push({x: shipX, y: shipY, life: 1});
+        
+        fbCtx.globalCompositeOperation = 'lighter';
+        for (let i = shipTrail.length - 1; i >= 0; i--) {
+            const p = shipTrail[i];
+            p.life -= 0.02;
+            if (p.life <= 0) {
+                shipTrail.splice(i, 1);
+                continue;
+            }
+            
+            const hue = (sectorPhase * 360 + performance.now() * 0.1) % 360;
+            fbCtx.fillStyle = `hsla(${hue}, 80%, 60%, ${p.life * 0.5})`;
+            fbCtx.beginPath();
+            fbCtx.arc(p.x, p.y, 15 * p.life, 0, Math.PI * 2);
+            fbCtx.fill();
+        }
+        fbCtx.globalCompositeOperation = 'source-over';
+    }
 
     function render(time) {
         time *= 0.001;
@@ -417,6 +510,8 @@
         
         shipX += (targetX - shipX) * 0.15;
         shipY += (targetY - shipY) * 0.15;
+        
+        audioEnergy *= 0.95; // затухание
         
         gl.viewport(0, 0, width, height);
         gl.clearColor(0, 0, 0, 1);
@@ -427,6 +522,7 @@
         gl.uniform2f(shipLoc, shipX, height - shipY);
         gl.uniform1f(speedLoc, speed);
         gl.uniform1f(sectorPhaseLoc, sectorPhase);
+        gl.uniform1f(audioEnergyLoc, audioEnergy);
 
         spawnTimer += dt;
         if (spawnTimer > spawnInterval / speed) {
@@ -445,20 +541,24 @@
                     aliens++;
                     xdust += 50;
                     showMessage('👽 +50 $XDUST!');
+                    audioEnergy = 1.5;
+                    playAlien();
                     if (tg) tg.HapticFeedback?.notificationOccurred('success');
                 } else if (e.type === 'dust') {
                     xdust += 10;
+                    audioEnergy = 0.5;
+                    playDust();
                     if (tg) tg.HapticFeedback?.impactOccurred('light');
                 } else if (e.type === 'obstacle') {
                     xdust = Math.max(0, xdust - 20);
                     showMessage('💥 -20 $XDUST!');
+                    audioEnergy = 2.0;
+                    playObstacle();
                     if (tg) tg.HapticFeedback?.notificationOccurred('error');
                 }
             }
 
-            if (e.y > height + 100) {
-                entities.splice(i, 1);
-            }
+            if (e.y > height + 100) entities.splice(i, 1);
         }
 
         if (xdust > sector * 200) {
@@ -466,10 +566,10 @@
             speed += 0.2;
             sectorPhase = (sector % 10) / 10;
             showMessage(`🌌 SECTOR ${sector}!`, 2000);
+            audioEnergy = 2.5;
             if (tg) tg.HapticFeedback?.notificationOccurred('success');
         }
 
-        // Pass entities to shader
         const entityData = new Float32Array(300);
         const visibleEntities = entities.filter(e => !e.collected).slice(0, 100);
         
@@ -482,8 +582,9 @@
         
         gl.uniform3fv(entitiesLoc, entityData);
         gl.uniform1i(entityCountLoc, visibleEntities.length);
-
         gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        renderFeedback();
 
         document.getElementById('xdust').textContent = `$XDUST: ${xdust}`;
         document.getElementById('level').textContent = `SECTOR: ${sector}`;
@@ -495,6 +596,5 @@
 
     requestAnimationFrame(render);
 </script>
-
 </body>
 </html>
