@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Galactic X-Dust Runner</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background: #000;
+            font-family: 'Courier New', monospace;
+            color: #0ff;
+        }
+        canvas {
+            display: block;
+            width: 100vw;
+            height: 100vh;
+            cursor: none;
+        }
+        #hud {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            padding: 20px;
+            box-sizing: border-box;
+            pointer-events: none;
+            text-shadow: 0 0 10px #0ff;
+        }
+        .hud-row {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            font-size: 18px;
+        }
+        #xdust {
+            color: #f0f;
+            font-size: 24px;
+            font-weight: bold;
+        }
+        #level {
+            color: #ff0;
+        }
+        #aliens {
+            color: #0f0;
+        }
+        #ship {
+            position: absolute;
+            font-size: 40px;
+            pointer-events: none;
+            filter: drop-shadow(0 0 10px #0ff);
+            transition: transform 0.1s;
+        }
+        #message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 48px;
+            text-align: center;
+            opacity: 0;
+            transition: opacity 0.3s;
+            pointer-events: none;
+        }
+        .show {
+            opacity: 1 !important;
+        }
+    </style>
+</head>
+<body>
+    <canvas id="canvas"></canvas>
+    <div id="hud">
+        <div class="hud-row">
+            <div id="xdust">$XDUST: 0</div>
+            <div id="level">SECTOR: 1</div>
+        </div>
+        <div class="hud-row">
+            <div id="aliens">👽 COLLECTED: 0</div>
+            <div>SPEED: <span id="speed">1.0</span>x</div>
+        </div>
+    </div>
+    <div id="ship">🚀</div>
+    <div id="message"></div>
+
+```
+<script>
+    const canvas = document.getElementById('canvas');
+    const gl = canvas.getContext('webgl2');
+    
+    let width = canvas.width = window.innerWidth;
+    let height = canvas.height = window.innerHeight;
+
+    window.addEventListener('resize', () => {
+        width = canvas.width = window.innerWidth;
+        height = canvas.height = window.innerHeight;
+        gl.viewport(0, 0, width, height);
+    });
+
+    const vertexShaderSource = `#version 300 es
+        in vec2 position;
+        void main() {
+            gl_Position = vec4(position, 0.0, 1.0);
+        }
+    `;
+
+    const fragmentShaderSource = `#version 300 es
+        precision highp float;
+        
+        uniform vec2 resolution;
+        uniform float time;
+        uniform vec2 ship;
+        uniform float speed;
+        uniform float sectorPhase;
+        
+        out vec4 fragColor;
+        
+        float hash(vec2 p) {
+            return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453);
+        }
+        
+        float noise(vec2 p) {
+            vec2 i = floor(p);
+            vec2 f = fract(p);
+            f = f * f * (3.0 - 2.0 * f);
+            
+            float a = hash(i);
+            float b = hash(i + vec2(1.0, 0.0));
+            float c = hash(i + vec2(0.0, 1.0));
+            float d = hash(i + vec2(1.0, 1.0));
+            
+            return mix(mix(a, b, f.x), mix(c, d, f.x), f.y);
+        }
+        
+        vec3 palette(float t, float phase) {
+            vec3 a = vec3(0.5, 0.5, 0.5);
+            vec3 b = vec3(0.5, 0.5, 0.5);
+            vec3 c = vec3(1.0, 1.0, 1.0);
+            vec3 d = vec3(0.0 + phase, 0.33, 0.67 - phase);
+            return a + b * cos(6.28318 * (c * t + d));
+        }
+        
+        void main() {
+            vec2 uv = gl_FragCoord.xy / resolution;
+            vec2 shipUv = ship / resolution;
+            
+            // Scrolling space effect
+            vec2 scrollUv = uv;
+            scrollUv.y += time * speed * 0.3;
+            
+            // Multi-layer $XDUST particles
+            float dust = 0.0;
+            for(int i = 0; i < 4; i++) {
+                float layer = float(i) + 1.0;
+                vec2 p = scrollUv * layer * 3.0;
+                p.y += time * speed * layer * 0.5;
+                
+                float n = noise(p);
+                n = smoothstep(0.4, 0.6, n);
+                dust += n * (1.0 / layer);
+            }
+            
+            // Tunnel effect around ship
+            vec2 toShip = uv - shipUv;
+            float distToShip = length(toShip);
+            float tunnel = 1.0 - exp(-distToShip * 2.0);
+            
+            // Nebula clouds
+            vec2 nebulaUv = uv * 2.0;
+            nebulaUv.y += time * speed * 0.1;
+            float nebula = 0.0;
+            for(int i = 0; i < 3; i++) {
+                nebula += noise(nebulaUv * float(i + 1) * 0.5) / float(i + 2);
+            }
+            
+            // Combine layers
+            float pattern = dust * 0.7 + nebula * 0.3;
+            pattern *= tunnel;
+            
+            // Dynamic color palette based on sector
+            vec3 col = palette(pattern + time * 0.1, sectorPhase);
+            
+            // Add stars
+            float stars = 0.0;
+            vec2 starUv = floor(scrollUv * 100.0);
+            if(hash(starUv) > 0.97) {
+                stars = 1.0;
+            }
+            col += vec3(stars) * 0.8;
+            
+            // Vignette
+            float vignette = 1.0 - distToShip * 0.3;
+            col *= vignette;
+            
+            fragColor = vec4(col, 1.0);
+        }
+    `;
+
+    function createShader(gl, type, source) {
+        const shader = gl.createShader(type);
+        gl.shaderSource(shader, source);
+        gl.compileShader(shader);
+        
+        if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+            console.error(gl.getShaderInfoLog(shader));
+            gl.deleteShader(shader);
+            return null;
+        }
+        
+        return shader;
+    }
+
+    const vertexShader = createShader(gl, gl.VERTEX_SHADER, vertexShaderSource);
+    const fragmentShader = createShader(gl, gl.FRAGMENT_SHADER, fragmentShaderSource);
+
+    const program = gl.createProgram();
+    gl.attachShader(program, vertexShader);
+    gl.attachShader(program, fragmentShader);
+    gl.linkProgram(program);
+
+    gl.useProgram(program);
+
+    const vertices = new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]);
+    const buffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, vertices, gl.STATIC_DRAW);
+
+    const positionLoc = gl.getAttribLocation(program, 'position');
+    gl.enableVertexAttribArray(positionLoc);
+    gl.vertexAttribPointer(positionLoc, 2, gl.FLOAT, false, 0, 0);
+
+    const resolutionLoc = gl.getUniformLocation(program, 'resolution');
+    const timeLoc = gl.getUniformLocation(program, 'time');
+    const shipLoc = gl.getUniformLocation(program, 'ship');
+    const speedLoc = gl.getUniformLocation(program, 'speed');
+    const sectorPhaseLoc = gl.getUniformLocation(program, 'sectorPhase');
+
+    // Game state
+    let shipX = width / 2;
+    let shipY = height * 0.75;
+    let xdust = 0;
+    let aliens = 0;
+    let sector = 1;
+    let speed = 1.0;
+    let sectorPhase = 0;
+
+    // Entities (obstacles and collectibles)
+    const entities = [];
+    
+    class Entity {
+        constructor(x, y, type) {
+            this.x = x;
+            this.y = y;
+            this.type = type; // 'alien', 'obstacle', 'dust'
+            this.collected = false;
+        }
+        
+        update(dt) {
+            this.y += speed * 300 * dt;
+        }
+        
+        checkCollision(sx, sy) {
+            const dx = this.x - sx;
+            const dy = this.y - sy;
+            return Math.sqrt(dx * dx + dy * dy) < 40;
+        }
+    }
+
+    function spawnEntity() {
+        const x = Math.random() * width;
+        const y = -50;
+        const rand = Math.random();
+        let type;
+        
+        if (rand < 0.3) type = 'alien';
+        else if (rand < 0.6) type = 'dust';
+        else type = 'obstacle';
+        
+        entities.push(new Entity(x, y, type));
+    }
+
+    function showMessage(text, duration = 1000) {
+        const msg = document.getElementById('message');
+        msg.textContent = text;
+        msg.classList.add('show');
+        setTimeout(() => msg.classList.remove('show'), duration);
+    }
+
+    let spawnTimer = 0;
+    const spawnInterval = 0.8;
+
+    // Mouse/touch controls
+    let targetX = shipX;
+    let targetY = shipY;
+
+    canvas.addEventListener('mousemove', (e) => {
+        targetX = e.clientX;
+        targetY = e.clientY;
+    });
+
+    canvas.addEventListener('touchmove', (e) => {
+        e.preventDefault();
+        targetX = e.touches[0].clientX;
+        targetY = e.touches[0].clientY;
+    });
+
+    let lastTime = 0;
+
+    function render(time) {
+        time *= 0.001;
+        const dt = time - lastTime;
+        lastTime = time;
+        
+        // Smooth ship movement
+        shipX += (targetX - shipX) * 0.1;
+        shipY += (targetY - shipY) * 0.1;
+        
+        // Render shader background
+        gl.viewport(0, 0, width, height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.uniform2f(resolutionLoc, width, height);
+        gl.uniform1f(timeLoc, time);
+        gl.uniform2f(shipLoc, shipX, height - shipY);
+        gl.uniform1f(speedLoc, speed);
+        gl.uniform1f(sectorPhaseLoc, sectorPhase);
+
+        gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+
+        // Spawn entities
+        spawnTimer += dt;
+        if (spawnTimer > spawnInterval / speed) {
+            spawnEntity();
+            spawnTimer = 0;
+        }
+
+        // Update and draw entities
+        const shipEl = document.getElementById('ship');
+        shipEl.style.left = shipX + 'px';
+        shipEl.style.top = shipY + 'px';
+
+        for (let i = entities.length - 1; i >= 0; i--) {
+            const e = entities[i];
+            e.update(dt);
+
+            if (!e.collected && e.checkCollision(shipX, shipY)) {
+                e.collected = true;
+                
+                if (e.type === 'alien') {
+                    aliens++;
+                    xdust += 50;
+                    showMessage('👽 +50 $XDUST!');
+                } else if (e.type === 'dust') {
+                    xdust += 10;
+                } else if (e.type === 'obstacle') {
+                    xdust = Math.max(0, xdust - 20);
+                    showMessage('💥 -20 $XDUST!');
+                }
+            }
+
+            if (e.y > height + 50) {
+                entities.splice(i, 1);
+            }
+        }
+
+        // Level up
+        if (xdust > sector * 200) {
+            sector++;
+            speed += 0.2;
+            sectorPhase = (sector % 10) / 10;
+            showMessage(`🌌 SECTOR ${sector}!`, 2000);
+        }
+
+        // Update HUD
+        document.getElementById('xdust').textContent = `$XDUST: ${xdust}`;
+        document.getElementById('level').textContent = `SECTOR: ${sector}`;
+        document.getElementById('aliens').textContent = `👽 COLLECTED: ${aliens}`;
+        document.getElementById('speed').textContent = speed.toFixed(1);
+
+        requestAnimationFrame(render);
+    }
+
+    // Draw entities on canvas overlay
+    const ctx = document.createElement('canvas').getContext('2d');
+    ctx.canvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none';
+    ctx.canvas.width = width;
+    ctx.canvas.height = height;
+    document.body.appendChild(ctx.canvas);
+
+    function drawEntities() {
+        ctx.clearRect(0, 0, width, height);
+        ctx.font = '32px Arial';
+        
+        entities.forEach(e => {
+            if (e.collected) return;
+            
+            let emoji = '';
+            if (e.type === 'alien') emoji = '👽';
+            else if (e.type === 'dust') emoji = '✨';
+            else emoji = '☄️';
+            
+            ctx.fillText(emoji, e.x - 16, e.y);
+        });
+        
+        requestAnimationFrame(drawEntities);
+    }
+
+    requestAnimationFrame(render);
+    drawEntities();
+</script>
+```
+
+</body>
+</html>
