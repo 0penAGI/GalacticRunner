@@ -182,42 +182,61 @@
     
     // --- Audio System (Synthesizer) ---
     let audioCtx = null;
+    let audioUnlocked = false;
 
     function initAudio() {
-        if(!audioCtx) {
-            audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+        if (!audioCtx) {
+            const Ctx = window.AudioContext || window.webkitAudioContext;
+            audioCtx = new Ctx();
         }
+    }
+
+    function unlockAudio() {
+        if (audioUnlocked) return;
+        initAudio();
+        if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+        }
+        // ultra-short silent tick to unlock iOS / Telegram WebView
+        const osc = audioCtx.createOscillator();
+        const gain = audioCtx.createGain();
+        gain.gain.value = 0.0001;
+        osc.connect(gain);
+        gain.connect(audioCtx.destination);
+        osc.start();
+        osc.stop(audioCtx.currentTime + 0.01);
+        audioUnlocked = true;
     }
 
     function playSynthSound(freq, type, decay, vol) {
         if (isPaused) return;
-        if(!audioCtx) return;
+        if (!audioCtx || audioCtx.state !== 'running') return;
 
         const osc = audioCtx.createOscillator();
         const gain = audioCtx.createGain();
-        
+
         osc.type = type;
         osc.frequency.setValueAtTime(freq, audioCtx.currentTime);
-        osc.frequency.exponentialRampToValueAtTime(freq * 0.1, audioCtx.currentTime + decay); // Pitch drop
-        
+        osc.frequency.exponentialRampToValueAtTime(Math.max(20, freq * 0.1), audioCtx.currentTime + decay);
+
         gain.gain.setValueAtTime(vol, audioCtx.currentTime);
-        gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + decay);
-        
+        gain.gain.exponentialRampToValueAtTime(0.0001, audioCtx.currentTime + decay);
+
         osc.connect(gain);
         gain.connect(audioCtx.destination);
-        
+
         osc.start();
         osc.stop(audioCtx.currentTime + decay);
     }
 
     const sounds = {
-        dust: () => playSynthSound(800, 'sine', 0.15, 0.1),    // Высокий пик
-        alien: () => playSynthSound(600, 'triangle', 0.4, 0.2), // Причудливый тон
-        hit: () => playSynthSound(100, 'sawtooth', 0.3, 0.2),   // Низкий жесткий
-        level: () => { // Аккорд повышения уровня
-            playSynthSound(440, 'square', 0.6, 0.1);
-            setTimeout(() => playSynthSound(554, 'square', 0.6, 0.1), 100);
-            setTimeout(() => playSynthSound(659, 'square', 0.6, 0.1), 200);
+        dust: () => playSynthSound(800, 'sine', 0.15, 0.12),
+        alien: () => playSynthSound(600, 'triangle', 0.4, 0.18),
+        hit: () => playSynthSound(110, 'sawtooth', 0.3, 0.22),
+        level: () => {
+            playSynthSound(440, 'square', 0.6, 0.12);
+            setTimeout(() => playSynthSound(554, 'square', 0.6, 0.12), 90);
+            setTimeout(() => playSynthSound(659, 'square', 0.6, 0.12), 180);
         }
     };
 
@@ -386,7 +405,7 @@
         } else {
             overlay.style.display = 'none';
             btn.textContent = "PAUSE";
-            if (audioCtx.state === 'suspended') audioCtx.resume();
+            if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
         }
     }
     
@@ -404,28 +423,15 @@
         m.classList.add('msg-show');
     }
 
+    // --- Audio Unlock (Telegram / iOS safe) ---
+    document.addEventListener('pointerdown', unlockAudio, { once: true });
+    document.addEventListener('touchstart', unlockAudio, { once: true, passive: true });
+
     // Input Handling
-    let audioInitialized = false;
     const move = (e) => {
         const t = e.touches ? e.touches[0] : e;
         targetX = t.clientX; 
         targetY = t.clientY;
-        
-        // Инициализация AudioContext только один раз при первом взаимодействии
-        if(!audioInitialized) {
-            initAudio();
-            // Проигрываем короткий "silent" звук, чтобы разблокировать WebView
-            const g = audioCtx.createGain();
-            g.gain.setValueAtTime(0, audioCtx.currentTime);
-            g.connect(audioCtx.destination);
-            const osc = audioCtx.createOscillator();
-            osc.connect(g);
-            osc.start();
-            osc.stop(audioCtx.currentTime + 0.01);
-            
-            if(audioCtx.state === 'suspended') audioCtx.resume();
-            audioInitialized = true;
-        }
     };
     
     window.addEventListener('mousemove', move);
