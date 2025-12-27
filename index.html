@@ -259,6 +259,7 @@
         uniform float phase;
         uniform float viscosity;
         uniform float density;
+        uniform float biome;
         uniform vec3 entities[50]; // x, y, type
         uniform int entityCount;
         out vec4 fragColor;
@@ -297,12 +298,23 @@
             vec2 q, r;
             float f = pattern(p * mix(0.8, 1.6, density) + time * 0.1 * speed * mix(0.6, 1.4, viscosity), q, r);
             
-            // Смешивание цветов на основе паттерна искажений
-            vec3 col = mix(
-                vec3(0.02, 0.04, 0.08) * (1.0 - density),
-                vec3(0.12, 0.02, 0.18) * (0.5 + density),
-                f
+            // --- BIOME COLOR MIXING ---
+            vec3 baseA = vec3(0.02, 0.04, 0.08);
+            vec3 baseB = vec3(0.12, 0.02, 0.18);
+
+            // Biome-driven palette shift
+            vec3 biomeTint = mix(
+                vec3(0.0, 0.2, 0.4),
+                vec3(0.4, 0.1, 0.6),
+                biome
             );
+
+            vec3 col = mix(
+                baseA * (1.0 - density),
+                baseB * (0.5 + density),
+                f
+            ) + biomeTint * 0.35;
+
             col = mix(col, vec3(0.0, 0.3, 0.4), length(q)); // q отвечает за крупные переливы
             col = mix(col, vec3(phase, 0.1, 0.5-phase), length(r)); // r за детали
             
@@ -371,6 +383,7 @@
         phase: gl.getUniformLocation(program, 'phase'),
         viscosity: gl.getUniformLocation(program, 'viscosity'),
         density: gl.getUniformLocation(program, 'density'),
+        biome: gl.getUniformLocation(program, 'biome'),
         ents: gl.getUniformLocation(program, 'entities'),
         entCount: gl.getUniformLocation(program, 'entityCount')
     };
@@ -388,7 +401,8 @@
             d = Math.min(1, Math.max(0, d + (Math.random() - 0.5) * 0.3));
             pathNodes.push({
                 viscosity: v,
-                density: d
+                density: d,
+                biome: Math.random()
             });
         }
     }
@@ -410,7 +424,8 @@
         const b = pathNodes[(pathIndex + 1) % PATH_LEN];
         return {
             viscosity: a.viscosity * (1.0 - pathProgress) + b.viscosity * pathProgress,
-            density:   a.density   * (1.0 - pathProgress) + b.density   * pathProgress
+            density:   a.density   * (1.0 - pathProgress) + b.density   * pathProgress,
+            biome:     a.biome     * (1.0 - pathProgress) + b.biome     * pathProgress
         };
     }
 
@@ -432,10 +447,19 @@
     function spawn() {
         if(isPaused || entities.length > 40) return;
         // Типы: 0=Dust, 1=Alien, 2=Obstacle
-        // Вероятности: 60% Dust, 20% Alien, 20% Obstacle
+        // Biome influences entity ecology
+        const node = getCurrentPathNode();
         const rand = Math.random();
         let type = 0;
-        if(rand > 0.6) type = (rand > 0.8) ? 1 : 2;
+
+        // Biome influences entity ecology
+        if (node.biome > 0.66) {
+            if (rand > 0.5) type = 1;
+        } else if (node.biome < 0.33) {
+            if (rand > 0.6) type = 2;
+        } else {
+            if (rand > 0.6) type = (rand > 0.8) ? 1 : 2;
+        }
 
         entities.push({
             x: Math.random() * width,
@@ -582,6 +606,7 @@
         gl.uniform2f(locs.ship, shipX, height - shipY); // Flip Y for WebGL
         gl.uniform1f(locs.speed, speed);
         gl.uniform1f(locs.phase, (sector % 5) / 5.0);
+        gl.uniform1f(locs.biome, node.biome);
 
         // Dynamic feedback: field reacts to speed
         const dynVisc = Math.min(1.0, node.viscosity + speed * 0.05);
