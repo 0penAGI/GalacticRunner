@@ -393,6 +393,26 @@
         }
     }
     generatePath();
+    // --- Accumulated Path Memory ---
+    let pathIndex = 0;
+    let pathProgress = 0.0;
+
+    function advancePath(dt) {
+        pathProgress += dt * speed * 0.25;
+        if (pathProgress >= 1.0) {
+            pathProgress = 0.0;
+            pathIndex = (pathIndex + 1) % PATH_LEN;
+        }
+    }
+
+    function getCurrentPathNode() {
+        const a = pathNodes[pathIndex];
+        const b = pathNodes[(pathIndex + 1) % PATH_LEN];
+        return {
+            viscosity: a.viscosity * (1.0 - pathProgress) + b.viscosity * pathProgress,
+            density:   a.density   * (1.0 - pathProgress) + b.density   * pathProgress
+        };
+    }
 
     // --- Game Logic ---
     let score = 0, sector = 1, speed = 1.0;
@@ -476,12 +496,13 @@
         requestAnimationFrame(loop);
 
         // Make node available everywhere in loop
-        const node = pathNodes[(sector - 1) % PATH_LEN];
+        const node = getCurrentPathNode();
         
         // --- LOGIC UPDATE (Only if not paused) ---
         if (!isPaused) {
             const dt = Math.min((t - lastT) * 0.001, 0.1);
             lastT = t;
+            advancePath(dt);
 
             // Smooth ship movement affected by viscosity (thick space effect)
             const controlDrag = 0.18 * (1.0 - node.viscosity * 0.7);
@@ -542,7 +563,11 @@
             if(score >= sector * 300) {
                 sector++;
                 speed += 0.15;
-                if (sector % PATH_LEN === 1) generatePath();
+                if (sector % PATH_LEN === 1) {
+                    generatePath();
+                    pathIndex = 0;
+                    pathProgress = 0.0;
+                }
                 sounds.level();
                 showMsg(`SECTOR ${sector} REACHED`);
             }
