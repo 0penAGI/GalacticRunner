@@ -162,6 +162,9 @@
         </div>
     </div>
 
+<audio id="ios-unlock" loop playsinline preload="auto">
+  <source src="silence.mp3" type="audio/mpeg">
+</audio>
 <script>
     // --- Init ---
     const tg = window.Telegram?.WebApp;
@@ -184,6 +187,14 @@
     let audioCtx = null;
     let audioUnlocked = false;
 
+    function unlockIOSMedia() {
+        const a = document.getElementById('ios-unlock');
+        if (!a) return;
+        a.volume = 0.0001;
+        const p = a.play();
+        if (p && p.catch) p.catch(()=>{});
+    }
+
     function initAudio() {
         if (!audioCtx) {
             const Ctx = window.AudioContext || window.webkitAudioContext;
@@ -194,17 +205,10 @@
     function unlockAudio() {
         if (audioUnlocked) return;
         initAudio();
+        unlockIOSMedia();
         if (audioCtx.state === 'suspended') {
             audioCtx.resume();
         }
-        // ultra-short silent tick to unlock iOS / Telegram WebView
-        const osc = audioCtx.createOscillator();
-        const gain = audioCtx.createGain();
-        gain.gain.value = 0.0001;
-        osc.connect(gain);
-        gain.connect(audioCtx.destination);
-        osc.start();
-        osc.stop(audioCtx.currentTime + 0.01);
         audioUnlocked = true;
     }
 
