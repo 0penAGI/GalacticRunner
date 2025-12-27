@@ -474,15 +474,19 @@
 
     function loop(t) {
         requestAnimationFrame(loop);
+
+        // Make node available everywhere in loop
+        const node = pathNodes[(sector - 1) % PATH_LEN];
         
         // --- LOGIC UPDATE (Only if not paused) ---
         if (!isPaused) {
             const dt = Math.min((t - lastT) * 0.001, 0.1);
             lastT = t;
 
-            // Smooth ship movement
-            shipX += (targetX - shipX) * 0.15;
-            shipY += (targetY - shipY) * 0.15;
+            // Smooth ship movement affected by viscosity (thick space effect)
+            const controlDrag = 0.18 * (1.0 - node.viscosity * 0.7);
+            shipX += (targetX - shipX) * controlDrag;
+            shipY += (targetY - shipY) * controlDrag;
 
             // Spawning
             spawnTimer += dt;
@@ -495,6 +499,16 @@
             for(let i=entities.length-1; i>=0; i--) {
                 const e = entities[i];
                 e.y += speed * 250 * dt;
+
+                // Alien gravitational attraction (field curvature)
+                if (e.t === 1) {
+                    const dx = e.x - shipX;
+                    const dy = e.y - shipY;
+                    const dist = Math.max(80, Math.hypot(dx, dy));
+                    const pull = 1200 * dt * (0.3 + node.density);
+                    e.x -= dx / dist * pull;
+                    e.y -= dy / dist * pull;
+                }
 
                 // Collision detection
                 const d = Math.hypot(e.x - shipX, e.y - shipY);
@@ -543,9 +557,13 @@
         gl.uniform2f(locs.ship, shipX, height - shipY); // Flip Y for WebGL
         gl.uniform1f(locs.speed, speed);
         gl.uniform1f(locs.phase, (sector % 5) / 5.0);
-        const node = pathNodes[(sector - 1) % PATH_LEN];
-        gl.uniform1f(locs.viscosity, node.viscosity);
-        gl.uniform1f(locs.density, node.density);
+
+        // Dynamic feedback: field reacts to speed
+        const dynVisc = Math.min(1.0, node.viscosity + speed * 0.05);
+        const dynDens = Math.min(1.0, node.density + Math.sin(t * 0.0003) * 0.15);
+
+        gl.uniform1f(locs.viscosity, dynVisc);
+        gl.uniform1f(locs.density, dynDens);
 
         // Flatten entities for GPU
         const entData = new Float32Array(150); // 50 * 3
